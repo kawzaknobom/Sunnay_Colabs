@@ -64,6 +64,7 @@ bot,Bot_Identifier = Pyrogram_Client(Bot_Token)
 async def _telegram_file(client, message):
   reply_msg = await message.reply('جار العمل')
   text = await tashkil_func(message.text)
+  await message.reply(text)
   Audio_File = await tts_ai(text)
   # Audio_File = Mp3_Conv(Audio_File)
   await message.reply_document(Audio_File)
