@@ -1,9 +1,10 @@
 import nest_asyncio
 nest_asyncio.apply()
+import os
 
 #########################################################
 
-Bot_Token = '7718588966:AAE2qBEWXrgS77NAEyJYP_RU98VMrGt_2Ys'
+Bot_Token = os.getenv('TOKEN')
 
 ########################################################
 
