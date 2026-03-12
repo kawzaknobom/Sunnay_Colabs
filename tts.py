@@ -71,14 +71,14 @@ async def _telegram_file(client, message):
   await reply_msg.edit_text('تم الإنتاج ✅')
 
 
-async def main():
+def main():
     if not os.path.exists(dl_path): os.makedirs(dl_path)
     try:
-        await bot.start()
+        bot.start()
         print("✅ TTS Bot is ONLINE!")
-        await idle()
+        idle()
     finally:
         if bot.is_connected:
-            await bot.stop()
+            bot.stop()
 
-await main()
+main()
