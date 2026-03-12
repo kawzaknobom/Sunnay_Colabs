@@ -1,4 +1,5 @@
 pyrogram
 tgcrypto
+nest_asyncio
 shakkala==1.7
 edge_tts
