@@ -1,5 +1,4 @@
 pyrogram
 tgcrypto
-tensorflow==2.9.3
 shakkala==1.7
 edge_tts
