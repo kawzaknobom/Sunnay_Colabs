@@ -65,10 +65,10 @@ async def _telegram_file(client, message):
   reply_msg = await message.reply('جار العمل')
   text = await tashkil_func(message.text)
   await message.reply(text)
-  Audio_File = await tts_ai(text)
-  # Audio_File = Mp3_Conv(Audio_File)
-  await message.reply_document(Audio_File)
-  os.remove(Audio_File)
+  # Audio_File = await tts_ai(text)
+  # # Audio_File = Mp3_Conv(Audio_File)
+  # await message.reply_document(Audio_File)
+  # os.remove(Audio_File)
   await reply_msg.edit_text('تم الإنتاج ✅')
 
 
