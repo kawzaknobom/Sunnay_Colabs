@@ -72,7 +72,6 @@ async def _telegram_file(client, message):
 
 
 def main():
-    if not os.path.exists(dl_path): os.makedirs(dl_path)
     try:
         bot.start()
         print("✅ TTS Bot is ONLINE!")
