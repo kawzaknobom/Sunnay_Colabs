@@ -11,6 +11,8 @@ from pyrogram.types import InlineKeyboardMarkup , InlineKeyboardButton , Callbac
 from pyrogram import Client, filters
 from pyrogram import idle
 import os,time,shutil,asyncio,edge_tts
+from shakkala import Shakkala
+sh = Shakkala()
 
 VOICE = "ar-EG-ShakirNeural"
 
@@ -39,6 +41,14 @@ async def tts_ai(text):
  #    file_path="output.wav")
  return Res
 
+async def tashkil_func(text):
+  input_int = sh.prepare_input(text)
+  model, graph = sh.get_model()
+  logits = model.predict(input_int)[0]
+  predicted_harakat = sh.logits_to_text(logits)
+  final_output = sh.get_final_text(text, predicted_harakat)
+  return final_output
+
 def Pyrogram_Client(Bot_Token):
   Bot_Identifier = Bot_Token.split(':')[0]
   Session_file = Bot_Identifier+'_955hyh95|session_prm_bot'
@@ -53,7 +63,8 @@ bot,Bot_Identifier = Pyrogram_Client(Bot_Token)
 @bot.on_message(filters.private & filters.incoming & (filters.text))
 async def _telegram_file(client, message):
   reply_msg = await message.reply('جار العمل')
-  Audio_File = await tts_ai(message.text)
+  text = await tashkil_func(message.text)
+  Audio_File = await tts_ai(text)
   # Audio_File = Mp3_Conv(Audio_File)
   await message.reply_document(Audio_File)
   os.remove(Audio_File)
