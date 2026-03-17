@@ -144,7 +144,7 @@ async def Media_Trim(file_path,Rate):
     Res_File = Res_Name + '_Trim.mp4'
     Trim_Cmd = f'ffmpeg -i "{file_path}" -ss {strt_point} -strict -2 -to {end_point} -c:a aac -codec:v h264 -b:v 1000k "{Res_File}" -y '
   os.system(Trim_Cmd)
-  return Res_File if Type else Encode_Vid(Res_File)
+  return Res_File if Type else await Encode_Vid(Res_File)
 
 #### Token #####
 
