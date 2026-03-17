@@ -171,8 +171,9 @@ async def refunc(client,message):
     reply_msg = await Get_Msg(bot,User_Id,reply_id)
     file_id = reply_msg.reply_to_message_id
     file_msg = await Get_Msg(bot,User_Id,file_id)
+    await reply_msg.delete()
     await message.delete()
-
+       
     replied = await file_msg.reply(f"جاري القص  ☕️ ")
     Media_File = await file_msg.download(file_name=Trim_Path)
     if ' ' in Media_File:
