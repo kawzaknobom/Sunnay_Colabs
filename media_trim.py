@@ -135,7 +135,7 @@ async def Media_Trim(file_path,Rate):
   strt_point = point_list[0]
   end_point = point_list[1]
   mainDir = '/'.join(file_path.split('/')[:-1]) + '/'
-  Res_Name = mainDir +  file_path.split('/')[-1].split('.')[0] + '_Trim.mp3'
+  Res_Name = mainDir +  file_path.split('/')[-1].split('.')[0]
   Type = True if file_path.lower().endswith(Audio_Forms) else False
   if Type :
     Res_File = Res_Name + '_Trim.mp3'
