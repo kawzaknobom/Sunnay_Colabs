@@ -160,10 +160,7 @@ async def command1(bot,message):
 @bot.on_message(filters.private & filters.incoming & (filters.audio | filters.video | filters.voice))
 async def _telegram_file(client, message):
       
-    message.reply_text(Media_Trim_Msg,reply_markup=ForceReply(True),reply_to_message_id=message.id)
-
-
-
+    await message.reply_text(Media_Trim_Msg,reply_markup=ForceReply(True),reply_to_message_id=message.id)
 
 @bot.on_message(filters.private & filters.reply)
 async def refunc(client,message):
