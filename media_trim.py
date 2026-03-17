@@ -185,7 +185,7 @@ async def refunc(client,message):
             start = per.split('-')[0]
             End = per.split('-')[1]
             cap =  ( f"`{start}` to `{End}`")
-            file = Media_Trim(Media_File,per)
+            file = await Media_Trim(Media_File,per)
             await Upld_File(file,file_msg,cap)
     await replied.edit_text('تم القص ')
 
