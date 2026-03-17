@@ -40,7 +40,7 @@ async def is_int(val):
     
 async def Get_Msg(bot,Chat_id,msg_id):
   try : 
-     msg = await bot.get_messages(int(Chat_id) if is_int(Chat_id) else str(Chat_id).replace('=','_'),int(msg_id))
+     msg = await bot.get_messages(int(Chat_id) if await is_int(Chat_id) else str(Chat_id).replace('=','_'),int(msg_id))
      return msg
   except FloodWait as e :
       time.sleep(e.value)
