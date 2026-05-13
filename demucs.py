@@ -249,9 +249,9 @@ def main():
     if not os.path.exists(Music_Rmv_Path): os.makedirs(Music_Rmv_Path)
     try:
         bot.start()
-        print("✅ Music Removal Bot is ONLINE!")
         if Admin_Id :
           bot.send_message(Admin_Id,'Started ✅')
+        print("✅ Music Removal Bot is ONLINE!")
         idle()
     finally:
         if bot.is_connected:
