@@ -5,6 +5,11 @@ nest_asyncio.apply()
 
 Bot_Token = os.getenv('TOKEN')
 
+if Bot_Token == '5623514771:AAEUXl-8JzuhWhRoQBujXQRALoSKYVbqHDA':
+   Admin_Id = 7007648648
+else :
+   Admin_Id = None
+
 ########################################################
 
 from pyrogram.types import InlineKeyboardMarkup , InlineKeyboardButton , CallbackQuery , ForceReply,Message
@@ -65,6 +70,8 @@ def main():
     if not os.path.exists(dl_path): os.makedirs(dl_path)
     try:
         bot.start()
+        if Admin_Id :
+          bot.send_message(Admin_Id,'Started ✅')
         print("✅ Whisper Bot is ONLINE!")
         idle()
     finally:
