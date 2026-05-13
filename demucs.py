@@ -5,6 +5,11 @@ nest_asyncio.apply()
 
 Bot_Token = os.getenv('TOKEN')
 
+if Bot_Token == '5623514771:AAEUXl-8JzuhWhRoQBujXQRALoSKYVbqHDA':
+   Admin_Id = 7007648648
+else :
+   Admin_Id = None
+
 ########################################################
 
 from pyrogram.types import InlineKeyboardMarkup , InlineKeyboardButton , ReplyKeyboardMarkup , CallbackQuery , ForceReply,Message
@@ -245,6 +250,8 @@ def main():
     try:
         bot.start()
         print("✅ Music Removal Bot is ONLINE!")
+        if Admin_Id :
+          bot.send_message(Admin_Id,'Started ✅')
         idle()
     finally:
         if bot.is_connected:
