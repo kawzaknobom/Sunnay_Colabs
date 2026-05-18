@@ -41,7 +41,7 @@ def Get_File(Dl_Dir,File_Ex):
   return None
 
 async def OllamaAi_Trans(Text):
-    response = ollama.chat(model='qwen2.5:7b', messages=[
+    response = ollama.chat(model='gemma2:9b', messages=[
         {
             'role': 'user',
             'content': f"ترجم النص التالي إلى اللغة العربية فقط. ممنوع تماماً استخدام أي حروف صينية أو إنجليزية في الإخراج. اكتب الترجمة العربية الفصحى مباشرة بدون مقدمات \n\n{Text}"
