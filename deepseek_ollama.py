@@ -44,7 +44,7 @@ async def OllamaAi_Trans(Text):
     response = ollama.chat(model='qwen2.5:7b', messages=[
         {
             'role': 'user',
-            'content': f"ترجم النص التالي إلى العربية بدقة وبأسلوب بليغ:\n\n{Text}"
+            'content': f"ترجم النص التالي إلى اللغة العربية فقط. ممنوع تماماً استخدام أي حروف صينية أو إنجليزية في الإخراج. اكتب الترجمة العربية الفصحى مباشرة بدون مقدمات \n\n{Text}"
         }
     ])
 
