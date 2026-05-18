@@ -13,7 +13,7 @@ from pyrogram.enums import MessageEntityType
 from pyrogram.types import Message
 from ultralytics import YOLO
 from deepface import DeepFace
-import cv2,os,shutil,time
+import cv2,os,shutil,time,audioread
 
 model = YOLO('yolov8n.pt') 
 
@@ -112,8 +112,9 @@ async def get_bodies(facebboxlist,bodybboxlist):
         if (fx1 >= bx1 and fx2 <= bx2 and fy1 >= fy1 and fy2 <= by2) :
           bodies.append(bodybbox)
   return bodies
-   
-async def Blur_Female(file_path,method):
+
+
+async def Blur_Female(file_path,method,replied):
   mainDir = '/'.join(file_path.split('/')[:-1]) + '/'
   P_Name = mainDir + file_path.split('/')[-1].split('.')[0]
   Ex = file_path.split('.')[-1]
@@ -124,6 +125,9 @@ async def Blur_Female(file_path,method):
   if not cap.isOpened():
     raise ValueError("Error opening video file")
   fps = cap.get(cv2.CAP_PROP_FPS)
+  totalNoFrames = cap.get(cv2.CAP_PROP_FRAME_COUNT)
+  durationInSeconds = totalNoFrames // fps
+  Stream_Dur = int(durationInSeconds)
   width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
   height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
   fourcc = cv2.VideoWriter_fourcc(*'mp4v')
@@ -136,6 +140,9 @@ async def Blur_Female(file_path,method):
     ret, frame = cap.read()
     if ret:
      ret_num += 1
+     if (ret_num%(int(fps)*1) == 0) :
+        text = f"{int(ret_num/fps)} seconds of {Stream_Dur} seconds"
+        await replied.edit_text(text)
      if method in ['framebyframe','blurframebyframe'] :
         last_known_people = await get_persons(frame)
         Women_faces,Men_Faces = await get_gender(frame)
@@ -200,7 +207,7 @@ async def callback_query(CLIENT,CallbackQuery):
   file_msg = await Get_Msg(bot,User_Id,Msg_Id)
   replied = await CallbackQuery.edit_message_text('جار العمل ...')
   Vid_Path = await file_msg.download(file_name=Dl_Dir)
-  Blurred_Vid = await Blur_Female(Vid_Path,Method)
+  Blurred_Vid = await Blur_Female(Vid_Path,Method,replied)
   await replied.edit_text('تمت')
   await file_msg.reply_video(Blurred_Vid)
   await Check_Dir(Dl_Dir)
