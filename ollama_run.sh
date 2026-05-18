@@ -8,6 +8,6 @@ sudo apt install python-is-python3
 sudo update-alternatives --install /usr/bin/pip pip /usr/bin/pip3
 curl -fsSL https://ollama.com/install.sh | sh
 pip3 install -r '/content/Sunnay_Colabs/ollama_requirements.txt'
-ollama serve > /dev/null 2>&1 &
+nohup ollama serve > /dev/null 2>&1 &
 ollama pull llama3.1
 python3 '/content/Sunnay_Colabs/deepseek_ollama.py'
