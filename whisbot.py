@@ -12,7 +12,6 @@ else :
 
 ########################################################
 
-from google.colab import output
 from pyrogram.types import InlineKeyboardMarkup , InlineKeyboardButton , CallbackQuery , ForceReply,Message
 from pyrogram import Client, filters
 from pyrogram.errors import FloodWait
@@ -65,7 +64,7 @@ async def _telegram_file(client, message):
   await message.reply_document(Txt_File)
   os.remove(Txt_File)
   await reply_msg.edit_text('تم التفريغ ✅')
-  output.clear()
+  os.system('clear')
 
 
 def main():

@@ -12,7 +12,6 @@ else :
 
 ########################################################
 
-from google.colab import output
 from pyrogram.types import InlineKeyboardMarkup , InlineKeyboardButton , ReplyKeyboardMarkup , CallbackQuery , ForceReply,Message
 from pyrogram import Client, filters,enums,StopTransmission,idle
 from pyrogram.errors import FloodWait
@@ -244,7 +243,7 @@ async def _telegram_file(client, message):
         Vid_File = Vid_File.replace(' ','_')
       await Music_Rmv(message,Vid_File,await Msg_Dur(message))
       await replied.edit_text('تمت الإزالة')
-      output.clear()
+      os.system('clear')
 
 
 def main():
