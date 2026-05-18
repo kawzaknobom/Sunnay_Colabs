@@ -41,7 +41,7 @@ def Get_File(Dl_Dir,File_Ex):
   return None
 
 async def OllamaAi_Trans(Text):
-    response = ollama.chat(model='deepseek-r1:8b', messages=[
+    response = ollama.chat(model='qwen2.5:7b', messages=[
         {
             'role': 'user',
             'content': f"ترجم النص التالي إلى العربية بدقة وبأسلوب بليغ:\n\n{Text}"
