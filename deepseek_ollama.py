@@ -65,13 +65,8 @@ async def _telegram_file(client, message):
               await message.reply('لبقية البوتات \n\n @sunnaybots')
           else :
               replied = await message.reply(f"جاري الترجمة  ☕️ ")
-              if not '\n' in message.text :
-                res = await OllamaAi_Trans(message.text)
-                await message.reply(res)
-              else :
-                 for line in message.text.split('\n'):
-                    res = await OllamaAi_Trans(line)
-                    await message.reply(res)
+              res = await OllamaAi_Trans(message.text)
+              await message.reply(res)
               await replied.edit_text('تمت الترجمة')
       elif message.document :
         replied = await message.reply(f"جاري الترجمة  ☕️ ")
@@ -80,7 +75,7 @@ async def _telegram_file(client, message):
             os.rename(File,File.replace(' ','_'))
             File = File.replace(' ','_')
         Text = open(File,'r').read()
-        if not '\n' in Text :
+        if len(Text) < 5000 :
                 res = await OllamaAi_Trans(Text)
                 await message.reply(res)
         else :
