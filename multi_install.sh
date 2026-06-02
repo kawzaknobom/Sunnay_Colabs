@@ -9,6 +9,6 @@ sudo apt install unzip -y
 sudo apt install ghostscript -y
 sudo apt install imagemagick -y
 sudo apt install poppler-utils -y
-wget https://www.fmwconcepts.com/imagemagick/downloadcounter.php?scriptname=coloration&dirname=coloration
-chmod u+x coloration
-pip3 install -r multi_requirements.txt
+wget -O '/content/Sunnay_Colabs/coloration' https://www.fmwconcepts.com/imagemagick/downloadcounter.php?scriptname=coloration&dirname=coloration
+chmod u+x '/content/Sunnay_Colabs/coloration'
+pip3 install -r '/content/Sunnay_Colabs/multi_requirements.txt'

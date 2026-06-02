@@ -7,8 +7,7 @@ Video_Forms = (".mp4",".mkv",".mov",".avi",".wmv",".avchd",".webm",".flv")
 
 Image_forms = (".jpg",".png",'.tif','webp')
 
-current_dir = os.getcwd()
-Coloration_File = current_dir + '/coloration'
+Coloration_File = '/content/Sunnay_Colabs/coloration'
 seg_per_sec = 1200
 count = 0
 T_linebreak = '\n\n ◾ــــــــــــــ◾ \n\n'
