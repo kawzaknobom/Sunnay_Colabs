@@ -3,10 +3,6 @@ from cookies_nodb import Audio_Forms,Video_Forms,Image_forms,count,T_linebreak,A
 import audioread,cv2,os,docx,arabic_reshaper,shutil,time,datetime,subprocess,re,img2pdf,asyncio,requests,json,urllib.parse
 from typing import Union
 from functools import reduce
-from moviepy.video.io.VideoFileClip import VideoFileClip
-from moviepy.video.compositing.concatenate import concatenate_videoclips
-import moviepy.video.fx.all as vfx
-
 from pyrogram import Client,enums
 from pyrogram.types import InlineKeyboardMarkup , InlineKeyboardButton , CallbackQuery ,Message,MessageEntity
 from pyrogram.errors import FloodWait
@@ -802,35 +798,6 @@ def Vid_Merge(Vid_Txt) :
   Vid_File = ('.' if Vid_Txt[0] =='.' else '') + Vid_Txt.split('.')[1 if Vid_Txt[0] =='.' else 0 ] + '_VMerged.mkv'
   Vid_Cmd = f'ffmpeg -f concat -safe 0 -i "{Vid_Txt}" -c copy "{Vid_File}"'
   os.system(Vid_Cmd)
-  # Vid_File = ('.' if Vid_list[0][0] =='.' else '') + Vid_list[0].split('.')[1 if Vid_list[0][0] =='.' else 0 ] + '_VMerged.mp4'
-  # Moviepy_List = []
-  # for vid in Vid_list : 
-  #   clip = VideoFileClip(vid)
-  #   Moviepy_List.append(clip)
-  # Method = "chain"
-  # final_clip = concatenate_videoclips(Moviepy_List, method=Method)
-  # final_clip.write_videofile(Vid_File,codec="libx264")
-  
-  # max_w = max(clip.w for clip in Moviepy_List)
-  # max_h = max(clip.h for clip in Moviepy_List)
-  # target_resolution = (max_w, max_h)
-  # processed_clips = [vfx.resize(clip,target_resolution) for clip in Moviepy_List]
-  # final_clip = concatenate_videoclips(processed_clips, method="chain")
-  # final_clip.write_videofile(Vid_File, codec="libx264")
-
-  # resolutions = [tuple(clip.size) for clip in Moviepy_List]
-  # unique_resolutions = set(resolutions)
-  # try :
-  #   if len(unique_resolutions) == 1:
-  #       Method = "chain"
-  #       final_clip = concatenate_videoclips(Moviepy_List, method=Method)
-  #   else:
-  #       Method = "compose"
-  #       Bg_color=[0,0,0]
-  #       final_clip = concatenate_videoclips(Moviepy_List, method=Method,bg_color=Bg_color)
-  #   final_clip.write_videofile(Vid_File,codec="libx264")
-  # except AttributeError as e:
-  #  pass
   return Vid_File
 
 def Aud_Merge(Txt_File):
