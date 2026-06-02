@@ -1,0 +1,39 @@
+# Media Processing
+
+audioread
+opencv-python
+moviepy==1.0.3
+Pillow
+img2pdf
+
+# Document & PDF Handling
+
+python-docx
+fpdf2
+PyPDF2
+pypdf
+pypdfium2
+pdf2image
+pdfCropMargins
+spire.presentation
+md2pdf
+tika
+
+
+# AI, Translation & Text Processing
+
+
+arabic-reshaper
+python-bidi
+pyarabic
+demoji
+webvtt-py
+pymongo
+
+# Integration & API
+
+pyrogram
+tgcrypto
+requests
+
+
