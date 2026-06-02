@@ -1,6 +1,6 @@
-from cookies_nodb import Audio_Forms,Video_Forms,Image_forms,count,T_linebreak,Api_Id,Api_Hash,Coloration_File,g_langs,Small_line_break,bucketname,seg_per_sec
+from cookies_nodb import Audio_Forms,Video_Forms,Image_forms,count,T_linebreak,Api_Id,Api_Hash,Coloration_File,g_langs,Small_line_break,seg_per_sec
 
-import audioread,cv2,os,docx,arabic_reshaper,shutil,time,pytesseract,webvtt,datetime,subprocess,re,img2pdf,asyncio,requests,json,urllib.parse
+import audioread,cv2,os,docx,arabic_reshaper,shutil,time,datetime,subprocess,re,img2pdf,asyncio,requests,json,urllib.parse
 from typing import Union
 from functools import reduce
 from moviepy.video.io.VideoFileClip import VideoFileClip
