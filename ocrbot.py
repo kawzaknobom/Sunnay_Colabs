@@ -26,9 +26,12 @@ bot,Bot_Identifier = Pyrogram_Client(Bot_Token)
 
 Ocr_dl_path = f'./downloads_{Bot_Identifier}/'
 
-ServAcc_Dir = f'./ServAcc_{Bot_Identifier}/'
+ServAcc_Dir = f'/content/Sunnay_Colabs/ServAcc_{Bot_Identifier}/'
 
-ServAcc_File = ''
+if len(os.listdir(ServAcc_Dir)) != 0 :
+   ServAcc_File = os.listdir(ServAcc_Dir)[0]
+else :
+    ServAcc_File = ''
 
 
 def Get_File(Dl_Dir,File_Ex):
@@ -57,7 +60,7 @@ def Ocr_Func(Ocr_Path,Serv_Acc):
 async def _telegram_file(client, message):
   if message.document : 
      if message.document.file_name.lower().endswith('json') : 
-        globals()['ServAcc_File'] = await message.download(file_name=ServAcc_File)
+        globals()['ServAcc_File'] = await message.download(file_name=ServAcc_Dir)
         await message.reply('تم تلقيم ملف Ocr')
      else :
         if len(globals()['ServAcc_File']) == 0 : 
@@ -83,7 +86,7 @@ async def _telegram_file(client, message):
 def main():
     try:
         bot.start()
-        print("✅ TTS Bot is ONLINE!")
+        print("✅ OCR Bot is ONLINE!")
         idle()
     finally:
         if bot.is_connected:
