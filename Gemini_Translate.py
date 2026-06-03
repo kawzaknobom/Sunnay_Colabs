@@ -156,7 +156,7 @@ async def Gemini_BTxt(TxtFile,Req_Count,lang_sy='ar',Api_Index=0) :
     New_Index = Api_Index+1 
     if New_Index < len(Gemini_Apis):
       if Req_Count%15 == 0 :
-        asyncio.sleep(60)
+        await asyncio.sleep(60)
       return await Gemini_BTxt(TxtFile,Req_Count,lang_sy,New_Index)
     else :
       return 'ERROR',Req_Count
@@ -167,7 +167,7 @@ async def Get_Msg(bot,Chat_id,msg_id):
      msg = await bot.get_messages(int(Chat_id),int(msg_id))
      return msg
   except FloodWait as e :
-      asyncio.sleep(e.value)
+      await asyncio.sleep(e.value)
       return await Get_Msg(bot,Chat_id,msg_id)
   except Exception as err : 
       pass
