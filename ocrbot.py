@@ -28,6 +28,9 @@ Ocr_dl_path = f'./downloads_{Bot_Identifier}/'
 
 ServAcc_Dir = f'/content/Sunnay_Colabs/ServAcc_{Bot_Identifier}/'
 
+if not os.path.isdir(ServAcc_Dir):
+   os.mkdir(ServAcc_Dir)
+
 if len(os.listdir(ServAcc_Dir)) != 0 :
    ServAcc_File = os.listdir(ServAcc_Dir)[0]
 else :
@@ -44,12 +47,16 @@ def Get_File(Dl_Dir,File_Ex):
 def Ocr_Func(Ocr_Path,Serv_Acc):
   
   Dir_Path = ('.' if Ocr_Path.startswith('.') else '') + '/'.join(Ocr_Path.split('/')[:-1]) + '/'
-  Tahweel_Cmd = f'''tahweel "{Ocr_Path}" \
-    --service-account-credentials "{Serv_Acc}" \
-    --pdf2image-thread-count 8 \
-    --processor-max-workers 8 \
-    --txt-page-separator 🟥 '''
-  p = subprocess.Popen(Tahweel_Cmd,cwd=Dir_Path,shell=True)
+  abs_serv_acc = os.path.abspath(Serv_Acc)
+  os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = abs_serv_acc
+  Tahweel_Cmd = (
+        f'tahweel "{Ocr_Path}" '
+        f'--service-account-credentials "{abs_serv_acc}" '
+        f'--pdf2image-thread-count 8 '
+        f'--processor-max-workers 8 '
+        f'--txt-page-separator 🟥'
+    )
+  p = subprocess.Popen(Tahweel_Cmd,cwd=Dir_Path,shell=True,env=os.environ)
   p.wait()
   Txt_File = Get_File(Dir_Path,'txt')
   Docx_File = Get_File(Dir_Path,'docx')
