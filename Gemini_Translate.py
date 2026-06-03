@@ -36,7 +36,7 @@ T_linebreak = '\n\n ◾ــــــــــــــ◾ \n\n'
 g_langs = [ 'العربية | ar','الإنجليزية | en','الفرنسية | fr','الألمانية | de','العبرية iw  |  iw','العبرية he | he','اليونانية | el','الأمهرية | am','الباسك | eu','البنغالية | bn','البرتغالية  | pt','البلغارية | bg','الكتالانية | ca','الشيروكية | chr','الكرواتية | hr','التشيكية | cs','الدنماركية | da','الهولندية | nl','الإستونية | et','الفلبينية | fil','الفنلندية | fi','الغوجاراتية | gu','الهندية |  hi','المجرية | hu','الأيسلندية | is ','الإندونيسية | id','الإيطالية | it','اليابانية | ja','الكانادا  | kn','الكورية | ko','اللاتفية | lv','الليتوانية | lt','الماليزية |  ms','المالايالامية | ml','الماراثية |  mr','النرويجية | no','البولندية | pl','الرومانية | ro','الروسية | ru','الصربية | sr','الصينية  | zh-cn','الصينية TW | zh-tw','السلوفاكية | sk','السلوفينية | sl','الإسبانية | es','السواحيلية | sw','السويدية | sv','التاميلية | ta','التيلوغوية | te','التايلاندية | th','التركية|  tr','الأوردية | ur','الأوكرانية | uk','الفيتنامية | vi' ,'الويلزية | cy','الأفريكانية | af', 'الأرمينية | hy','الألبانية | sq','الأذريبيجانية | az','البيلاروسية | be','البوسنية | bs','السبيونوية | ceb','الشيشوانية | ny','الكورسيكية | co', 'الهولندية | nl','الاسبرانتو | eo','الاستوانية | et','الفلبينية | tl','الزولو | zu ','يوروبا | yo','اليديشية | yi','xhosa | xh','الأوزبكية | uz ','أويغور | ug','طاجيكية | tg','السودانية | su','الصومالية | so','السنهالية | si','السندية | sd','شونا | sn','سيسوتو | st','الغيلية | gd','ساموا | sm','رومانية | ro','بنجابية | pa' ,'فارسية | fa','باشتو | ps','أوديا | or','نرويجية | no' ,'نيبالية | ne','ميانمارية | my','منغولية | mn','ماورية | mi','مالطية | mt','قيرغيزستانية | ky','كردية | ku','الخميرية | km','الكازخستانية | kk','الجاوية | jw','الأيرلندية | ga','الإندونيسية | id', 'الإيغبو | ig', 'المجرية | hu', 'همونغ | hmn','هاواي | haw','هاوسا | ha','الكريولية | ht' ,'الجورجية | ka','الجاليكية | gl','الفريزية | fy','لاوية | lo', 'لاتينية | la', 'ليتوانية | lt', 'لوكسمبورغية | lb','المقدونية | mk', 'الملغاشية | mg']
 
 
-Gemini_dl_path = f'./downloads_{Bot_Identifier}/'
+Gemini_dl_path = f'/content/Sunnay_Colabs/downloads_{Bot_Identifier}/'
 
 Gemini_Dir = f'/content/Sunnay_Colabs/Gemini_{Bot_Identifier}/'
 
@@ -45,7 +45,7 @@ if not os.path.isdir(Gemini_Dir):
 
 if len(os.listdir(Gemini_Dir)) != 0 :
    Gemini_File = os.listdir(Gemini_Dir)[0]
-   Gemini_Tokens = open(Gemini_File,'r').read().split('/n')
+   Gemini_Tokens = open(Gemini_Dir+Gemini_File,'r').read().split(' ')
 else :
     Gemini_File = ''
 
@@ -164,7 +164,7 @@ async def Gemini_BTxt(TxtFile,Req_Count,lang_sy='ar',Api_Index=0) :
 
 async def Get_Msg(bot,Chat_id,msg_id):
   try : 
-     msg = bot.get_messages(int(Chat_id),int(msg_id))
+     msg = await bot.get_messages(int(Chat_id),int(msg_id))
      return msg
   except FloodWait as e :
       asyncio.sleep(e.value)
@@ -177,7 +177,11 @@ async def _telegram_file(client, message):
   if message.text :
      if re.search(Gemini_Token_Pattern,message.text) :
         open(Gemini_Dir+'gemini.txt','w').write(message.text)
-        return 
+        await message.reply('تم تلقيم التوكنات')
+        return
+     elif len(globals()['Gemini_File']) == 0 : 
+            await message.reply('قم بإرسال توكن Gemini')
+            return 
 
   if message.document : 
         if len(globals()['Gemini_File']) == 0 : 
@@ -203,8 +207,9 @@ async def callback_query(CLIENT,CallbackQuery):
   Callback_List = CallbackQuery.data.split('_')
   msg_id = int(Callback_List[0])
   lang = Callback_List[1]
-  Msg = await Get_Msg(User_Id,msg_id)
+  Msg = await Get_Msg(bot,User_Id,msg_id)
   if Msg.text :
+    await Check_Dir(Gemini_dl_path)
     open(Gemini_dl_path+'text.txt','w').write(Msg.text)
     Res = await Gemini_Trans_Txt(Gemini_dl_path+'text.txt',lang)
     await Msg.reply_document(Res)
@@ -228,7 +233,7 @@ Gemini_Trans_Txt
 def main():
     try:
         bot.start()
-        print("✅ OCR Bot is ONLINE!")
+        print("✅ Gemini Bot is ONLINE!")
         idle()
     finally:
         if bot.is_connected:
