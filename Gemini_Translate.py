@@ -222,7 +222,7 @@ async def callback_query(CLIENT,CallbackQuery):
   elif Msg.document :
     if Msg.document.file_name.lower().endswith('txt') :
         txt = await Msg.download(file_name=Gemini_dl_path)
-        Res = await Gemini_Trans_Txt(Gemini_dl_path+txt,lang)
+        Res = await Gemini_Trans_Txt(txt,lang)
         await Msg.reply_document(Res)
         await Check_Dir(Gemini_dl_path)
         await Replied.edit_text(" تم  ")
