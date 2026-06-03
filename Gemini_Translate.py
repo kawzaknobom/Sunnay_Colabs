@@ -178,6 +178,7 @@ async def _telegram_file(client, message):
      if re.search(Gemini_Token_Pattern,message.text) :
         open(Gemini_Dir+'gemini.txt','w').write(message.text)
         await message.reply('تم تلقيم التوكنات')
+        globals()['Gemini_File'] = 'gemini.txt'
         return
      elif len(globals()['Gemini_File']) == 0 : 
             await message.reply('قم بإرسال توكن Gemini')
