@@ -26,7 +26,6 @@ arabic-reshaper
 python-bidi
 pyarabic
 demoji
-webvtt-py
 pymongo
 
 # Integration & API
