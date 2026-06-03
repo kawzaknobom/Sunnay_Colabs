@@ -62,6 +62,14 @@ def Ocr_Func(Ocr_Path,Serv_Acc):
   Docx_File = Get_File(Dir_Path,'docx')
   return Txt_File,Docx_File
 
+async def Create_Dir(Dir):
+  if not os.path.isdir(Dir):
+    os.makedirs(Dir, exist_ok=True)
+
+async def Check_Dir(Dir):
+  if os.path.isdir(Dir):
+      shutil.rmtree(Dir)
+  await Create_Dir(Dir)
 
 @bot.on_message(filters.private & filters.incoming)
 async def _telegram_file(client, message):
@@ -79,6 +87,7 @@ async def _telegram_file(client, message):
            await message.reply_document(Txt_File)
            await message.reply_document(Docx_File)
            await replied.edit_text('تم العمل')
+           await Check_Dir(Ocr_dl_path)
   elif message.photo :
      if len(globals()['ServAcc_File']) == 0 : 
         await message.reply('قم بإرسال ملف Service Account')
@@ -88,6 +97,8 @@ async def _telegram_file(client, message):
            Txt_File,Docx_File = Ocr_Func(Ocr_File,globals()['ServAcc_File'])
            await message.reply(open(Txt_File,'r').read())
            await replied.edit_text('تم العمل')
+           await Check_Dir(Ocr_dl_path)
+    
 
 
 def main():
