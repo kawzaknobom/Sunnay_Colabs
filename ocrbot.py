@@ -96,6 +96,7 @@ async def _telegram_file(client, message):
            Ocr_File = await message.download(file_name=Ocr_dl_path)
            Txt_File,Docx_File = Ocr_Func(Ocr_File,globals()['ServAcc_File'])
            await message.reply(open(Txt_File,'r').read())
+           await message.reply_document(Txt_File)
            await replied.edit_text('تم العمل')
            await Check_Dir(Ocr_dl_path)
     
