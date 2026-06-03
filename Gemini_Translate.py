@@ -210,13 +210,14 @@ async def callback_query(CLIENT,CallbackQuery):
   msg_id = int(Callback_List[0])
   lang = Callback_List[1]
   Msg = await Get_Msg(bot,User_Id,msg_id)
+  Replied = await CallbackQuery.edit_message_text(" جار العمل  ")
   if Msg.text :
     await Check_Dir(Gemini_dl_path)
     open(Gemini_dl_path+'text.txt','w').write(Msg.text)
     Res = await Gemini_Trans_Txt(Gemini_dl_path+'text.txt',lang)
     await Msg.reply_document(Res)
     await Check_Dir(Gemini_dl_path)
-    await CallbackQuery.edit_message_text(" تم  ")
+    await Replied.edit_text(" تم  ")
   
   elif Msg.document :
     if Msg.document.file_name.lower().endswith('txt') :
@@ -224,7 +225,7 @@ async def callback_query(CLIENT,CallbackQuery):
         Res = await Gemini_Trans_Txt(Gemini_dl_path+'text.txt',lang)
         await Msg.reply_document(Res)
         await Check_Dir(Gemini_dl_path)
-        await CallbackQuery.edit_message_text(" تم  ")
+        await Replied.edit_text(" تم  ")
 
 
 
