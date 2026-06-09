@@ -6,6 +6,12 @@ import os
 
 Bot_Token = os.getenv('TOKEN')
 
+
+if Bot_Token == '5623514771:AAEUXl-8JzuhWhRoQBujXQRALoSKYVbqHDA':
+   Admin_Id = 7007648648
+else :
+   Admin_Id = None
+
 ########################################################
 
 from pyrogram.types import InlineKeyboardMarkup , InlineKeyboardButton , CallbackQuery , ForceReply,Message
@@ -194,7 +200,9 @@ async def callback_query(CLIENT,CallbackQuery):
 def main():
     try:
         bot.start()
-        print("✅ Gemini Bot is ONLINE!")
+        if Admin_Id :
+          bot.send_message(Admin_Id,'Started ✅')
+        print("✅ Google Translate Bot is ONLINE!")
         idle()
     finally:
         if bot.is_connected:

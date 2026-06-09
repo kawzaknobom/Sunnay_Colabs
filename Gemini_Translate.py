@@ -6,6 +6,12 @@ import os
 
 Bot_Token = os.getenv('TOKEN')
 
+
+if Bot_Token == '5623514771:AAEUXl-8JzuhWhRoQBujXQRALoSKYVbqHDA':
+   Admin_Id = 7007648648
+else :
+   Admin_Id = None
+
 ########################################################
 
 from pyrogram.types import InlineKeyboardMarkup , InlineKeyboardButton , CallbackQuery , ForceReply,Message
@@ -232,6 +238,8 @@ async def callback_query(CLIENT,CallbackQuery):
 def main():
     try:
         bot.start()
+        if Admin_Id :
+          bot.send_message(Admin_Id,'Started ✅')
         print("✅ Gemini Bot is ONLINE!")
         idle()
     finally:
