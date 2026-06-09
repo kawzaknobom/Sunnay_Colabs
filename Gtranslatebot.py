@@ -149,22 +149,8 @@ async def Get_Msg(bot,Chat_id,msg_id):
 
 @bot.on_message(filters.private & filters.incoming)
 async def _telegram_file(client, message):
-  if message.text :
-     if re.search(Gemini_Token_Pattern,message.text) :
-        open(Gemini_Dir+'gemini.txt','w').write(message.text)
-        await message.reply('تم تلقيم التوكنات')
-        globals()['Gemini_File'] = 'gemini.txt'
-        globals()['Gemini_Tokens'] = message.text.split(' ')
-        return
-     elif len(globals()['Gemini_File']) == 0 : 
-            await message.reply('قم بإرسال توكن Gemini')
-            return 
-
-  if message.document : 
-        if len(globals()['Gemini_File']) == 0 : 
-            await message.reply('قم بإرسال توكن Gemini')
-            return
-
+  if not (message.text or message.document) :
+     return
   CHOOSE_UR_LANG = "اختر اللغة المراد الترجمة إليها"
   LANGS_BUTTONS = []
   for lang in g_langs : 
