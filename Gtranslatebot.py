@@ -15,8 +15,10 @@ from pyrogram.types import InlineKeyboardMarkup , InlineKeyboardButton , Callbac
 from pyrogram.errors import FloodWait
 from pyrogram.enums import MessageEntityType
 
-from google import genai
-from google.genai import types
+from googletrans import Translator
+
+translator = Translator()
+
 from textwrap import wrap
 import os,asyncio,shutil,re
 
@@ -37,23 +39,6 @@ g_langs = [ 'العربية | ar','الإنجليزية | en','الفرنسية 
 
 
 Gemini_dl_path = f'/content/Sunnay_Colabs/downloads_{Bot_Identifier}/'
-
-Gemini_Dir = f'/content/Sunnay_Colabs/Gemini_{Bot_Identifier}/'
-
-if not os.path.isdir(Gemini_Dir):
-   os.mkdir(Gemini_Dir)
-
-if len(os.listdir(Gemini_Dir)) != 0 :
-   Gemini_File = os.listdir(Gemini_Dir)[0]
-   Gemini_Tokens = open(Gemini_Dir+Gemini_File,'r').read().split(' ')
-else :
-    Gemini_File = ''
-
-
-
-Gemini_Model = 'gemini-2.5-flash-lite'
-#Gemini_Model = 'gemini-2.5-pro'
-
 
 async def Check_File(File):
   if os.path.isfile(File):
@@ -92,16 +77,18 @@ async def Grap_Lang(Sym):
       break
   return F_L
 
-async def Gemini_Trans_Txt(TxtFile,lang_sy='ar'):
+
+    
+async def Google_Trans_Txt(TxtFile,lang_sy='ar'):
   mainDir = '/'.join(TxtFile.split('/')[:-1]) + '/'
   Res_Name = mainDir +  TxtFile.split('/')[-1].split('.')[0]
   Txt_File = Res_Name + '_Translated.txt'
   await Check_File(Txt_File)
   Text = open(TxtFile,'r').read()
-  await Gemini_CTxt(TxtFile,Txt_File,Text,lang_sy,0,10000)
+  await Google_CTxt(TxtFile,Txt_File,Text,lang_sy,0,10000)
   return Txt_File
   
-async def Gemini_CTxt(TxtFile,Txt_File,Text,lang_sy,Req_Count=0,Limit=20000):
+async def Google_CTxt(TxtFile,Txt_File,Text,lang_sy,Req_Count=0,Limit=20000):
   with open(Txt_File,'a') as f : 
     if len(Text) > Limit : 
       Textlist = await Wrap_Text(Text,Limit)
@@ -110,11 +97,11 @@ async def Gemini_CTxt(TxtFile,Txt_File,Text,lang_sy,Req_Count=0,Limit=20000):
         Res_Name = mainDir +  TxtFile.split('/')[-1].split('.')[0]
         Txt_Part = Res_Name + f'_P0000{Num}.txt'
         open(Txt_Part,'a').write(part)
-        Res_Text,Req_Count = await Gemini_BTxt(Txt_Part,Req_Count,lang_sy)
+        Res_Text,Req_Count = await Google_BTxt(Txt_Part,Req_Count,lang_sy)
         if Res_Text == 'ERROR' :
           New_Limit = Limit-5000
           if New_Limit != 0 :
-            return await Gemini_CTxt(TxtFile,Txt_File,Text,lang_sy,Req_Count,New_Limit)
+            return await Google_CTxt(TxtFile,Txt_File,Text,lang_sy,Req_Count,New_Limit)
           else : 
            mainDir = '/'.join(TxtFile.split('/')[:-1]) + '/'
            Res_Name = mainDir +  TxtFile.split('/')[-1].split('.')[0]
@@ -126,41 +113,29 @@ async def Gemini_CTxt(TxtFile,Txt_File,Text,lang_sy,Req_Count=0,Limit=20000):
         f.write(Res_Text)
         os.remove(Txt_Part)
     else : 
-      Res_Text,Req_Count = await Gemini_BTxt(TxtFile,Req_Count,lang_sy)
+      Res_Text,Req_Count = await Google_BTxt(TxtFile,Req_Count,lang_sy)
       if Res_Text == 'ERROR' :
           New_Limit = Limit-5000
           if New_Limit != 0 :
-            return await Gemini_CTxt(TxtFile,Txt_File,Text,lang_sy,Req_Count,New_Limit)
+            return await Google_CTxt(TxtFile,Txt_File,Text,lang_sy,Req_Count,New_Limit)
           else : 
            raise ValueError('انتهت توكنات اليوم 🌿')
       f.write(Res_Text)
       
 
-async def Gemini_BTxt(TxtFile,Req_Count,lang_sy='ar',Api_Index=0) : 
-  Gemini_Apis = globals()['Gemini_Tokens']
-  client = genai.Client(api_key=Gemini_Apis[Api_Index])
-  F_L = await Grap_Lang(lang_sy)
-  Translate_Prompt = f"""
-ترجم هذا الملف النصي بأكمله بدقة إلى {F_L}  👇
-  
-  """ 
+async def Google_BTxt(TxtFile,Req_Count,lang_sy='ar') : 
   try : 
-    file = client.files.upload(file=TxtFile)
-    response = client.models.generate_content(model=Gemini_Model, contents=[Translate_Prompt, file])
+    Text = open(TxtFile,'r').read()
+    response = await translator.translate(Text, dest=lang_sy)
     Res = await Rmv_Trans(response.text)
     Res = Res + T_linebreak + open(TxtFile,'r').read() + T_linebreak
     Req_Count += 1
     return Res,Req_Count
   except Exception as err : 
     Req_Count+=1
-    New_Index = Api_Index+1 
-    if New_Index < len(Gemini_Apis):
-      if Req_Count%15 == 0 :
+    if Req_Count%15 == 0 :
         await asyncio.sleep(60)
-      return await Gemini_BTxt(TxtFile,Req_Count,lang_sy,New_Index)
-    else :
-      return 'ERROR',Req_Count
-      #raise ValueError('انتهت توكنات اليوم 🌿')
+        return await Google_BTxt(TxtFile,Req_Count,lang_sy)
 
 async def Get_Msg(bot,Chat_id,msg_id):
   try : 
@@ -214,7 +189,7 @@ async def callback_query(CLIENT,CallbackQuery):
   if Msg.text :
     await Check_Dir(Gemini_dl_path)
     open(Gemini_dl_path+'text.txt','w').write(Msg.text)
-    Res = await Gemini_Trans_Txt(Gemini_dl_path+'text.txt',lang)
+    Res = await Google_Trans_Txt(Gemini_dl_path+'text.txt',lang)
     await Msg.reply_document(Res)
     await Check_Dir(Gemini_dl_path)
     await Replied.edit_text(" تم  ")
@@ -222,10 +197,11 @@ async def callback_query(CLIENT,CallbackQuery):
   elif Msg.document :
     if Msg.document.file_name.lower().endswith('txt') :
         txt = await Msg.download(file_name=Gemini_dl_path)
-        Res = await Gemini_Trans_Txt(txt,lang)
+        Res = await Google_Trans_Txt(txt,lang)
         await Msg.reply_document(Res)
         await Check_Dir(Gemini_dl_path)
         await Replied.edit_text(" تم  ")
+
 
 
 
