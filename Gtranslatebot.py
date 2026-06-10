@@ -26,7 +26,7 @@ from googletrans import Translator
 translator = Translator()
 
 from textwrap import wrap
-import os,asyncio,shutil,re
+import os,time,shutil,re
 
 def Pyrogram_Client(Bot_Token):
   Bot_Identifier = Bot_Token.split(':')[0]
@@ -43,8 +43,6 @@ T_linebreak = '\n\n ◾ــــــــــــــ◾ \n\n'
 
 g_langs = [ 'العربية | ar','الإنجليزية | en','الفرنسية | fr','الألمانية | de','العبرية iw  |  iw','العبرية he | he','اليونانية | el','الأمهرية | am','الباسك | eu','البنغالية | bn','البرتغالية  | pt','البلغارية | bg','الكتالانية | ca','الشيروكية | chr','الكرواتية | hr','التشيكية | cs','الدنماركية | da','الهولندية | nl','الإستونية | et','الفلبينية | fil','الفنلندية | fi','الغوجاراتية | gu','الهندية |  hi','المجرية | hu','الأيسلندية | is ','الإندونيسية | id','الإيطالية | it','اليابانية | ja','الكانادا  | kn','الكورية | ko','اللاتفية | lv','الليتوانية | lt','الماليزية |  ms','المالايالامية | ml','الماراثية |  mr','النرويجية | no','البولندية | pl','الرومانية | ro','الروسية | ru','الصربية | sr','الصينية  | zh-cn','الصينية TW | zh-tw','السلوفاكية | sk','السلوفينية | sl','الإسبانية | es','السواحيلية | sw','السويدية | sv','التاميلية | ta','التيلوغوية | te','التايلاندية | th','التركية|  tr','الأوردية | ur','الأوكرانية | uk','الفيتنامية | vi' ,'الويلزية | cy','الأفريكانية | af', 'الأرمينية | hy','الألبانية | sq','الأذريبيجانية | az','البيلاروسية | be','البوسنية | bs','السبيونوية | ceb','الشيشوانية | ny','الكورسيكية | co', 'الهولندية | nl','الاسبرانتو | eo','الاستوانية | et','الفلبينية | tl','الزولو | zu ','يوروبا | yo','اليديشية | yi','xhosa | xh','الأوزبكية | uz ','أويغور | ug','طاجيكية | tg','السودانية | su','الصومالية | so','السنهالية | si','السندية | sd','شونا | sn','سيسوتو | st','الغيلية | gd','ساموا | sm','رومانية | ro','بنجابية | pa' ,'فارسية | fa','باشتو | ps','أوديا | or','نرويجية | no' ,'نيبالية | ne','ميانمارية | my','منغولية | mn','ماورية | mi','مالطية | mt','قيرغيزستانية | ky','كردية | ku','الخميرية | km','الكازخستانية | kk','الجاوية | jw','الأيرلندية | ga','الإندونيسية | id', 'الإيغبو | ig', 'المجرية | hu', 'همونغ | hmn','هاواي | haw','هاوسا | ha','الكريولية | ht' ,'الجورجية | ka','الجاليكية | gl','الفريزية | fy','لاوية | lo', 'لاتينية | la', 'ليتوانية | lt', 'لوكسمبورغية | lb','المقدونية | mk', 'الملغاشية | mg']
 
-
-Gemini_dl_path = f'/content/Sunnay_Colabs/downloads_{Bot_Identifier}/'
 
 async def Check_File(File):
   if os.path.isfile(File):
@@ -104,18 +102,6 @@ async def Google_CTxt(TxtFile,Txt_File,Text,lang_sy,Req_Count=0,Limit=20000):
         Txt_Part = Res_Name + f'_P0000{Num}.txt'
         open(Txt_Part,'a').write(part)
         Res_Text,Req_Count = await Google_BTxt(Txt_Part,Req_Count,lang_sy)
-        if Res_Text == 'ERROR' :
-          New_Limit = Limit-5000
-          if New_Limit != 0 :
-            return await Google_CTxt(TxtFile,Txt_File,Text,lang_sy,Req_Count,New_Limit)
-          else : 
-           mainDir = '/'.join(TxtFile.split('/')[:-1]) + '/'
-           Res_Name = mainDir +  TxtFile.split('/')[-1].split('.')[0]
-           Rest_File = Res_Name + f'_Res.txt'
-           with open(Rest_File,'a') as Rf : 
-             for sec in Textlist[Num:]:
-               Rf.write(sec)
-           raise ValueError('انتهت توكنات اليوم 🌿')
         f.write(Res_Text)
         os.remove(Txt_Part)
     else : 
@@ -140,7 +126,7 @@ async def Google_BTxt(TxtFile,Req_Count,lang_sy='ar') :
   except Exception as err : 
     Req_Count+=1
     if Req_Count%15 == 0 :
-        await asyncio.sleep(60)
+        time.sleep(60)
         return await Google_BTxt(TxtFile,Req_Count,lang_sy)
 
 async def Get_Msg(bot,Chat_id,msg_id):
@@ -148,7 +134,7 @@ async def Get_Msg(bot,Chat_id,msg_id):
      msg = await bot.get_messages(int(Chat_id),int(msg_id))
      return msg
   except FloodWait as e :
-      await asyncio.sleep(e.value)
+      time.sleep(e.value)
       return await Get_Msg(bot,Chat_id,msg_id)
   except Exception as err : 
       pass
@@ -178,20 +164,21 @@ async def callback_query(CLIENT,CallbackQuery):
   lang = Callback_List[1]
   Msg = await Get_Msg(bot,User_Id,msg_id)
   Replied = await CallbackQuery.edit_message_text(" جار العمل  ")
+  Google_dl_path = f'/content/Sunnay_Colabs/downloads_{msg_id}/'
   if Msg.text :
-    await Check_Dir(Gemini_dl_path)
-    open(Gemini_dl_path+'text.txt','w').write(Msg.text)
-    Res = await Google_Trans_Txt(Gemini_dl_path+'text.txt',lang)
+    await Check_Dir(Google_dl_path)
+    open(Google_dl_path+'text.txt','w').write(Msg.text)
+    Res = await Google_Trans_Txt(Google_dl_path+'text.txt',lang)
     await Msg.reply_document(Res)
-    await Check_Dir(Gemini_dl_path)
+    await Check_Dir(Google_dl_path)
     await Replied.edit_text(" تم  ")
   
   elif Msg.document :
     if Msg.document.file_name.lower().endswith('txt') :
-        txt = await Msg.download(file_name=Gemini_dl_path)
+        txt = await Msg.download(file_name=Google_dl_path)
         Res = await Google_Trans_Txt(txt,lang)
         await Msg.reply_document(Res)
-        await Check_Dir(Gemini_dl_path)
+        await Check_Dir(Google_dl_path)
         await Replied.edit_text(" تم  ")
 
 
