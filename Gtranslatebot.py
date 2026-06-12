@@ -82,7 +82,7 @@ async def Grap_Lang(Sym):
   return F_L
 
 
-    
+   
 async def Google_Trans_Txt(TxtFile,lang_sy='ar'):
   mainDir = '/'.join(TxtFile.split('/')[:-1]) + '/'
   Res_Name = mainDir +  TxtFile.split('/')[-1].split('.')[0]
@@ -106,12 +106,6 @@ async def Google_CTxt(TxtFile,Txt_File,Text,lang_sy,Req_Count=0,Limit=20000):
         os.remove(Txt_Part)
     else : 
       Res_Text,Req_Count = await Google_BTxt(TxtFile,Req_Count,lang_sy)
-      if Res_Text == 'ERROR' :
-          New_Limit = Limit-5000
-          if New_Limit != 0 :
-            return await Google_CTxt(TxtFile,Txt_File,Text,lang_sy,Req_Count,New_Limit)
-          else : 
-           raise ValueError('انتهت توكنات اليوم 🌿')
       f.write(Res_Text)
       
 

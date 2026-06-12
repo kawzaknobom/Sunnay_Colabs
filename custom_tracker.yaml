@@ -1,0 +1,9 @@
+# custom_tracker.yaml
+tracker_type: bytetrack # or botsort
+track_high_thresh: 0.5
+track_low_thresh: 0.1
+new_track_thresh: 0.6
+track_buffer: 30
+match_thresh: 0.8
+gmc_method: none # <--- THIS FIXES THE OPENCV CRASH
+fuse_score: True  # <--- ADD THIS LINE TO FIX THE ERROR
