@@ -155,7 +155,12 @@ async def Blur_Female(file_path,method,replied):
         Women_faces,Men_Faces = await get_gender(frame)
         start_point = True
      elif method == 'perhalfsecond' :
-      if (ret_num%(int(fps)*0.5) == 0) or start_point == False :
+      if (ret_num%(int(int(fps)*0.5)) == 0) or start_point == False :
+        last_known_people = await get_persons(frame)
+        Women_faces,Men_Faces = await get_gender(frame)
+        start_point = True
+     elif method == 'perqsecond' :
+      if (ret_num%(int(int(fps)*0.3)) == 0) or start_point == False :
         last_known_people = await get_persons(frame)
         Women_faces,Men_Faces = await get_gender(frame)
         start_point = True
@@ -169,7 +174,7 @@ async def Blur_Female(file_path,method,replied):
         women_bodies = await get_bodies(Women_faces,last_known_people)
         for body in women_bodies :
            x1, y1, x2, y2 = body
-           frame[y1:y2,x1:x2] = cv2.blur(frame[y1:y2, x1:x2], (151, 151))
+           frame[y1:y2,x1:x2] = cv2.blur(frame[y1:y2, x1:x2], (499, 499))
      out.write(frame)
     else:
         break 
@@ -196,6 +201,7 @@ async def _telegram_file(client, message):
    CHOOSE_UR_BUTTONS = [
       [InlineKeyboardButton("Per Second",callback_data='persecond'+'_'+str(message.id))],
       [InlineKeyboardButton("Per Half Second",callback_data='perhalfsecond'+'_'+str(message.id))],
+      [InlineKeyboardButton("Per Quarter Second",callback_data='perqsecond'+'_'+str(message.id))],
       [InlineKeyboardButton("Per Frame",callback_data='perframe'+'_'+str(message.id))]
         ]
    await message.reply(text = "اختر ما يناسب",reply_markup = InlineKeyboardMarkup(CHOOSE_UR_BUTTONS))
