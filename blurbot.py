@@ -142,15 +142,24 @@ async def Blur_Female(file_path,method,replied):
      ret_num += 1
      if (ret_num%(int(fps)*1) == 0) :
         text = f"{int(ret_num/fps)} seconds of {Stream_Dur} seconds"
-        await replied.edit_text(text)
-     if method in ['framebyframe','blurframebyframe'] :
+        try :
+          await replied.edit_text(text)
+        except :
+           pass
+     if method == 'perframe' :
         last_known_people = await get_persons(frame)
         Women_faces,Men_Faces = await get_gender(frame)
-     else :
+     elif method == 'persecond' :
       if (ret_num%(int(fps)*1) == 0) or start_point == False :
         last_known_people = await get_persons(frame)
         Women_faces,Men_Faces = await get_gender(frame)
         start_point = True
+     elif method == 'perhalfsecond' :
+      if (ret_num%(int(fps)*0.5) == 0) or start_point == False :
+        last_known_people = await get_persons(frame)
+        Women_faces,Men_Faces = await get_gender(frame)
+        start_point = True
+        
         # if len(Women_faces) == 0 :
         #   start_point = False      
         # else :
@@ -160,10 +169,7 @@ async def Blur_Female(file_path,method,replied):
         women_bodies = await get_bodies(Women_faces,last_known_people)
         for body in women_bodies :
            x1, y1, x2, y2 = body
-           if method == 'blurfemale':
-            frame[y1:y2,x1:x2] = cv2.blur(frame[y1:y2, x1:x2], (151, 151))
-           elif method in ['blurframe','blurframebyframe']:
-              frame = cv2.blur(frame, (151, 151))
+           frame[y1:y2,x1:x2] = cv2.blur(frame[y1:y2, x1:x2], (151, 151))
      out.write(frame)
     else:
         break 
@@ -188,10 +194,9 @@ async def _telegram_file(client, message):
   #  Vid_Path = await message.download(file_name=Dl_Dir)
   #  Blurred_Vid = await Blur_Female(Vid_Path)
    CHOOSE_UR_BUTTONS = [
-      [InlineKeyboardButton("حجب النساء - سريع وغير دقيق",callback_data='blurfemale'+'_'+str(message.id))],
-      [InlineKeyboardButton("حجب النساء - دقيق وبطيء",callback_data='framebyframe'+'_'+str(message.id))],
-      [InlineKeyboardButton("حجب الفريم عند النساء - سريع غير دقيق ",callback_data='blurframe'+'_'+str(message.id))],
-      [InlineKeyboardButton("حجب الفريم عند النساء - بطيء دقيق ",callback_data='blurframebyframe'+'_'+str(message.id))]
+      [InlineKeyboardButton("Per Second",callback_data='persecond'+'_'+str(message.id))],
+      [InlineKeyboardButton("Per Half Second",callback_data='perhalfsecond'+'_'+str(message.id))],
+      [InlineKeyboardButton("Per Frame",callback_data='perframe'+'_'+str(message.id))]
         ]
    await message.reply(text = "اختر ما يناسب",reply_markup = InlineKeyboardMarkup(CHOOSE_UR_BUTTONS))
   #  await Reply.edit_text('تمت ')
