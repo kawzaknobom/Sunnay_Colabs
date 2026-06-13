@@ -119,7 +119,6 @@ async def Blur_Female(file_path,method,replied):
   P_Name = mainDir + file_path.split('/')[-1].split('.')[0]
   Ex = file_path.split('.')[-1]
   Res_File = f"{P_Name}_Blurred.{Ex}"
-  Aud = await Mp3_Conv(file_path)
   file_path = await Media_Compress(file_path)
   cap = cv2.VideoCapture(file_path)
   if not cap.isOpened():
@@ -134,12 +133,15 @@ async def Blur_Female(file_path,method,replied):
   out = cv2.VideoWriter(Res_File, fourcc, fps, (width, height))
   bodies_dict = {}
   last_update_time = 0
-  start_point = False 
+  start_point = False
+  end_point = False
   ret_num = 0
   while(True):
     ret, frame = cap.read()
     if ret:
      ret_num += 1
+     if ret_num == int(totalNoFrames) - int(fps) :
+        end_point = True
      if (ret_num%(int(fps)*1) == 0) :
         text = f"{int(ret_num/fps)} seconds of {Stream_Dur} seconds"
         try :
@@ -150,21 +152,22 @@ async def Blur_Female(file_path,method,replied):
         last_known_people = await get_persons(frame)
         Women_faces,Men_Faces = await get_gender(frame)
      elif method == 'persecond' :
-      if (ret_num%(int(fps)*1) == 0) or start_point == False :
+      if (ret_num%(int(fps)*1) == 0) or start_point == False or end_point == True :
         last_known_people = await get_persons(frame)
         Women_faces,Men_Faces = await get_gender(frame)
         start_point = True
      elif method == 'perhalfsecond' :
-      if (ret_num%(int(int(fps)*0.5)) == 0) or start_point == False :
+      if (ret_num%(int(int(fps)*0.5)) == 0) or start_point == False or end_point == True :
         last_known_people = await get_persons(frame)
         Women_faces,Men_Faces = await get_gender(frame)
         start_point = True
      elif method == 'perqsecond' :
-      if (ret_num%(int(int(fps)*0.3)) == 0) or start_point == False :
+      if (ret_num%(int(int(fps)*0.3)) == 0) or start_point == False or end_point == True :
         last_known_people = await get_persons(frame)
         Women_faces,Men_Faces = await get_gender(frame)
         start_point = True
-        
+    #  if ret_num == int(totalNoFrames) - int(fps)  :
+    #     end_point = False
         # if len(Women_faces) == 0 :
         #   start_point = False      
         # else :
@@ -182,24 +185,51 @@ async def Blur_Female(file_path,method,replied):
         break 
   cap.release()
   out.release()
-  
+  Res_File = await blurring(file_path,method,bodies_dict)
+  return Res_File
+
+async def blurring(file_path,method,bodies_dict):
+  mainDir = '/'.join(file_path.split('/')[:-1]) + '/'
+  P_Name = mainDir + file_path.split('/')[-1].split('.')[0]
+  Ex = file_path.split('.')[-1]
+  Res_File = f"{P_Name}_Blurred.{Ex}"
+  Aud = await Mp3_Conv(file_path)
+  cap = cv2.VideoCapture(file_path)
+  if not cap.isOpened():
+    raise ValueError("Error opening video file")
+  fps = cap.get(cv2.CAP_PROP_FPS)
+  totalNoFrames = cap.get(cv2.CAP_PROP_FRAME_COUNT)
+  durationInSeconds = totalNoFrames // fps
+  Stream_Dur = int(durationInSeconds)
+  width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+  height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+  fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+  out = cv2.VideoWriter(Res_File, fourcc, fps, (width, height))
+  start_point = False 
   ret_num = 0
   while(True):
     ret, frame = cap.read()
     if ret:
      ret_num += 1
      for rate in list(bodies_dict.keys()) :
-      if ret_num in range(rate - int(fps),rate + int(fps)):
+      if method == 'perframe':
+         x , y = rate - int(int(fps)*0.1) , rate + int(int(fps)*0.1)
+      elif method == 'persecond':
+         x , y = rate - int(fps) , rate + int(fps)
+      elif method == 'perhalfsecond':
+         x , y = rate - int(int(fps)*0.5) , rate + int(int(fps)*0.5)
+      elif method == 'perqsecond':
+         x , y = rate - int(int(fps)*0.3) , rate + int(int(fps)*0.3)
+      if ret_num in range(x,y):
          women_bodies = bodies_dict[rate]
          for body in women_bodies :
            x1, y1, x2, y2 = body
            frame[y1:y2,x1:x2] = cv2.blur(frame[y1:y2, x1:x2], (499, 499)) 
-      out.write(frame)
+     out.write(frame)
     else:
         break 
   cap.release()
   out.release()  
-
   Res_File = await Vid_Mk(Res_File,Aud)
   Res_File = await Media_Compress(Res_File)
   return Res_File
