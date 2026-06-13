@@ -132,10 +132,10 @@ async def Blur_Female(file_path,method,replied):
   height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
   fourcc = cv2.VideoWriter_fourcc(*'mp4v')
   out = cv2.VideoWriter(Res_File, fourcc, fps, (width, height))
+  bodies_dict = {}
   last_update_time = 0
   start_point = False 
   ret_num = 0
-  UPDATE_INTERVAL = 5 # seconds
   while(True):
     ret, frame = cap.read()
     if ret:
@@ -172,14 +172,34 @@ async def Blur_Female(file_path,method,replied):
       
      if len(Women_faces) != 0 :
         women_bodies = await get_bodies(Women_faces,last_known_people)
-        for body in women_bodies :
-           x1, y1, x2, y2 = body
-           frame[y1:y2,x1:x2] = cv2.blur(frame[y1:y2, x1:x2], (499, 499))
+        bodies_dict[ret_num] = women_bodies
+        Women_faces.clear()
+        # for body in women_bodies :
+        #    x1, y1, x2, y2 = body
+        #    frame[y1:y2,x1:x2] = cv2.blur(frame[y1:y2, x1:x2], (499, 499))
      out.write(frame)
     else:
         break 
   cap.release()
   out.release()
+  
+  ret_num = 0
+  while(True):
+    ret, frame = cap.read()
+    if ret:
+     ret_num += 1
+     for rate in list(bodies_dict.keys()) :
+      if ret_num in range(rate - int(fps),rate + int(fps)):
+         women_bodies = bodies_dict[rate]
+         for body in women_bodies :
+           x1, y1, x2, y2 = body
+           frame[y1:y2,x1:x2] = cv2.blur(frame[y1:y2, x1:x2], (499, 499)) 
+      out.write(frame)
+    else:
+        break 
+  cap.release()
+  out.release()  
+
   Res_File = await Vid_Mk(Res_File,Aud)
   Res_File = await Media_Compress(Res_File)
   return Res_File
