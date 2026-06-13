@@ -114,6 +114,82 @@ async def get_bodies(facebboxlist,bodybboxlist):
   return bodies
 
 
+async def Blur_nonmale(file_path,method,replied):
+  mainDir = '/'.join(file_path.split('/')[:-1]) + '/'
+  P_Name = mainDir + file_path.split('/')[-1].split('.')[0]
+  Ex = file_path.split('.')[-1]
+  Res_File = f"{P_Name}_Blurred.{Ex}"
+  file_path = await Media_Compress(file_path)
+  cap = cv2.VideoCapture(file_path)
+  if not cap.isOpened():
+    raise ValueError("Error opening video file")
+  fps = cap.get(cv2.CAP_PROP_FPS)
+  totalNoFrames = cap.get(cv2.CAP_PROP_FRAME_COUNT)
+  durationInSeconds = totalNoFrames // fps
+  Stream_Dur = int(durationInSeconds)
+  width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+  height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+  fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+  out = cv2.VideoWriter(Res_File, fourcc, fps, (width, height))
+  bodies_dict = {}
+  last_update_time = 0
+  start_point = False
+  end_point = False
+  ret_num = 0
+  while(True):
+    ret, frame = cap.read()
+    if ret:
+     ret_num += 1
+     if ret_num == int(totalNoFrames) - int(fps) :
+        end_point = True
+     if (ret_num%(int(fps)*1) == 0) :
+        text = f"{int(ret_num/fps)} seconds of {Stream_Dur} seconds"
+        try :
+          await replied.edit_text(text)
+        except :
+           pass
+     if method == 'perframe' :
+        last_known_people = await get_persons(frame)
+        Women_faces,Men_Faces = await get_gender(frame)
+     elif method == 'persecond' :
+      if (ret_num%(int(fps)*1) == 0) or start_point == False or end_point == True :
+        last_known_people = await get_persons(frame)
+        Women_faces,Men_Faces = await get_gender(frame)
+        start_point = True
+     elif method == 'perhalfsecond' :
+      if (ret_num%(int(int(fps)*0.5)) == 0) or start_point == False or end_point == True :
+        last_known_people = await get_persons(frame)
+        Women_faces,Men_Faces = await get_gender(frame)
+        start_point = True
+     elif method == 'perqsecond' :
+      if (ret_num%(int(int(fps)*0.3)) == 0) or start_point == False or end_point == True :
+        last_known_people = await get_persons(frame)
+        Women_faces,Men_Faces = await get_gender(frame)
+        start_point = True
+    #  if ret_num == int(totalNoFrames) - int(fps)  :
+    #     end_point = False
+        # if len(Women_faces) == 0 :
+        #   start_point = False      
+        # else :
+        #   start_point = True 
+      
+     if len(last_known_people) != 0 :
+        men_bodies = await get_bodies(Men_Faces,last_known_people)
+        lest_bodies = [item for item in last_known_people if item not in men_bodies]
+        bodies_dict[ret_num] = lest_bodies
+        last_known_people.clear()
+        # for body in women_bodies :
+        #    x1, y1, x2, y2 = body
+        #    frame[y1:y2,x1:x2] = cv2.blur(frame[y1:y2, x1:x2], (499, 499))
+     out.write(frame)
+    else:
+        break 
+  cap.release()
+  out.release()
+  Res_File = await blurring(file_path,method,bodies_dict)
+  return Res_File
+
+
 async def Blur_Female(file_path,method,replied):
   mainDir = '/'.join(file_path.split('/')[:-1]) + '/'
   P_Name = mainDir + file_path.split('/')[-1].split('.')[0]
@@ -249,11 +325,8 @@ async def _telegram_file(client, message):
   #  Vid_Path = await message.download(file_name=Dl_Dir)
   #  Blurred_Vid = await Blur_Female(Vid_Path)
    CHOOSE_UR_BUTTONS = [
-      [InlineKeyboardButton("Per Second",callback_data='persecond'+'_'+str(message.id))],
-      [InlineKeyboardButton("Per Half Second",callback_data='perhalfsecond'+'_'+str(message.id))],
-      [InlineKeyboardButton("Per Quarter Second",callback_data='perqsecond'+'_'+str(message.id))],
-      [InlineKeyboardButton("Per Frame",callback_data='perframe'+'_'+str(message.id))]
-        ]
+      [InlineKeyboardButton("Blur Female",callback_data='blurfemale'+'_'+str(message.id))],
+      [InlineKeyboardButton("Blur Non-Male",callback_data='blurnonmale'+'_'+str(message.id))] ]
    await message.reply(text = "اختر ما يناسب",reply_markup = InlineKeyboardMarkup(CHOOSE_UR_BUTTONS))
   #  await Reply.edit_text('تمت ')
   #  await Check_Dir(Dl_Dir)
@@ -264,14 +337,29 @@ async def callback_query(CLIENT,CallbackQuery):
   User_Id = CallbackQuery.from_user.id
   Callback_List = CallbackQuery.data.split('_')
   Method = Callback_List[0]
-  Msg_Id = Callback_List[1]
-  file_msg = await Get_Msg(bot,User_Id,Msg_Id)
-  replied = await CallbackQuery.edit_message_text('جار العمل ...')
-  Vid_Path = await file_msg.download(file_name=Dl_Dir)
-  Blurred_Vid = await Blur_Female(Vid_Path,Method,replied)
-  await replied.edit_text('تمت')
-  await file_msg.reply_video(Blurred_Vid)
-  await Check_Dir(Dl_Dir)
+  Msg_Id = Callback_List[-1]
+  if Method in ['blurfemale','blurnonmale']:
+    CHOOSE_UR_BUTTONS = [
+      [InlineKeyboardButton("Per Second",callback_data='persecond' + '_'+ Method + '_' + Msg_Id)],
+      [InlineKeyboardButton("Per Half Second",callback_data='perhalfsecond' + '_' + Method + '_' + Msg_Id)],
+      [InlineKeyboardButton("Per Quarter Second",callback_data='perqsecond' + '_'+ Method + '_' + Msg_Id)],
+      [InlineKeyboardButton("Per Frame",callback_data='perframe'+'_'+ Msg_Id)]
+        ]
+    await CallbackQuery.edit_message_text(text = 'اختر',reply_markup = InlineKeyboardMarkup(CHOOSE_UR_BUTTONS))
+
+     
+  elif Method in ['persecond','perhalfsecond','perqsecond','perframe'] :
+    Method2 = Callback_List[1]
+    file_msg = await Get_Msg(bot,User_Id,Msg_Id)
+    replied = await CallbackQuery.edit_message_text('جار العمل ...')
+    Vid_Path = await file_msg.download(file_name=Dl_Dir)
+    if Method2 == 'blurfemale' :
+      Blurred_Vid = await Blur_Female(Vid_Path,Method,replied)
+    elif Method2 == 'blurnonmale':
+       Blurred_Vid = await Blur_nonmale(Vid_Path,Method,replied)
+    await replied.edit_text('تمت')
+    await file_msg.reply_video(Blurred_Vid)
+    await Check_Dir(Dl_Dir)
 
 
 def main():
