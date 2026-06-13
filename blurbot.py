@@ -86,7 +86,7 @@ async def get_gender(frame):
 
 async def get_persons(frame):
    last_known_people = []
-   results = model.track(frame, persist=True, tracker="custom_tracker.yaml", classes=[0])
+   results = model.track(frame, persist=True, tracker="/content/Sunnay_Colabs/custom_tracker.yaml", classes=[0])
    for r in results:
          if r.boxes.id is not None:
             for box, track_id in zip(r.boxes.xyxy, r.boxes.id):
