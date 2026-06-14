@@ -12,4 +12,5 @@ torchaudio
 numpy
 transformers
 gradio
+mediapipe
 huggingface-hub

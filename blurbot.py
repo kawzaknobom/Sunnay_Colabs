@@ -17,11 +17,27 @@ import torch
 from transformers import CLIPProcessor, CLIPModel
 import cv2,os,shutil,time,audioread
 from math import ceil
+import mediapipe as mp
+from mediapipe.tasks import python
+from mediapipe.tasks.python import vision
 
 model = YOLO('yolov8n.pt')
 clip_model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32")
 clip_processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
 texts = ["a photo of a man", "a photo of a woman"]
+
+model_path = 'efficientdet.tflite'
+BaseOptions = mp.tasks.BaseOptions
+ObjectDetector = mp.tasks.vision.ObjectDetector
+ObjectDetectorOptions = mp.tasks.vision.ObjectDetectorOptions
+VisionRunningMode = mp.tasks.vision.RunningMode
+options = ObjectDetectorOptions(
+    base_options=BaseOptions(model_asset_path=model_path),
+    score_threshold=0.5, # Minimum confidence
+    running_mode=VisionRunningMode.IMAGE
+)
+
+mp_detector =  ObjectDetector.create_from_options(options)
 
 Api_Id = 15952578
 Api_Hash = '3600ce5f8f9b9e18cba0f318fa0e3600'
@@ -76,7 +92,32 @@ async def Get_Msg(bot,Chat_id,msg_id):
       return await Get_Msg(bot,Chat_id,msg_id)
   except Exception as err : 
       pass
-  
+
+   
+async def detect_people_mediapipe(frame):
+    people = []
+    bgr_image = frame
+    h, w, _ = bgr_image.shape
+    
+    # MediaPipe expects RGB format
+    rgb_image = cv2.cvtColor(bgr_image, cv2.COLOR_BGR2RGB)
+    mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_image)
+
+    detection_result = mp_detector.detect(mp_image)
+
+    for detection in detection_result.detections:
+        category = detection.categories[0]
+        if category.category_name == 'person':
+            bbox = detection.bounding_box
+            xmin = bbox.origin_x
+            ymin = bbox.origin_y
+            width = bbox.width
+            height = bbox.height
+            bbbox = (xmin, ymin , xmin + width, ymin + height)
+            people.append(bbbox)
+    return people
+            
+            
 async def get_gender(frame):
     Women_Faces = []
     Men_Faces = []
@@ -156,20 +197,32 @@ async def Blur_nonmale(file_path,method,replied):
            pass
      if method == 'perframe' :
         last_known_people = await get_persons(frame)
+        added_people = await detect_people_mediapipe(frame)
+        for body in added_people : 
+           last_known_people.append(body)
         Women_faces,Men_Faces = await get_gender(frame)
      elif method == 'persecond' :
       if (ret_num%(int(fps)*1) == 0) or start_point == False or end_point == True :
         last_known_people = await get_persons(frame)
+        added_people = await detect_people_mediapipe(frame)
+        for body in added_people : 
+           last_known_people.append(body)
         Women_faces,Men_Faces = await get_gender(frame)
         start_point = True
      elif method == 'perhalfsecond' :
       if (ret_num%(int(int(fps)*0.5)) == 0) or start_point == False or end_point == True :
         last_known_people = await get_persons(frame)
+        added_people = await detect_people_mediapipe(frame)
+        for body in added_people : 
+           last_known_people.append(body)
         Women_faces,Men_Faces = await get_gender(frame)
         start_point = True
      elif method == 'perqsecond' :
       if (ret_num%(int(int(fps)*0.3)) == 0) or start_point == False or end_point == True :
         last_known_people = await get_persons(frame)
+        added_people = await detect_people_mediapipe(frame)
+        for body in added_people : 
+           last_known_people.append(body)
         Women_faces,Men_Faces = await get_gender(frame)
         start_point = True
     #  if ret_num == int(totalNoFrames) - int(fps)  :
@@ -253,20 +306,32 @@ async def Blur_Female(file_path,method,replied):
            pass
      if method == 'perframe' :
         last_known_people = await get_persons(frame)
+        added_people = await detect_people_mediapipe(frame)
+        for body in added_people : 
+           last_known_people.append(body)
         Women_faces,Men_Faces = await get_gender(frame)
      elif method == 'persecond' :
       if (ret_num%(int(fps)*1) == 0) or start_point == False or end_point == True :
         last_known_people = await get_persons(frame)
+        added_people = await detect_people_mediapipe(frame)
+        for body in added_people : 
+           last_known_people.append(body)
         Women_faces,Men_Faces = await get_gender(frame)
         start_point = True
      elif method == 'perhalfsecond' :
       if (ret_num%(int(int(fps)*0.5)) == 0) or start_point == False or end_point == True :
         last_known_people = await get_persons(frame)
+        added_people = await detect_people_mediapipe(frame)
+        for body in added_people : 
+           last_known_people.append(body)
         Women_faces,Men_Faces = await get_gender(frame)
         start_point = True
      elif method == 'perqsecond' :
       if (ret_num%(int(int(fps)*0.3)) == 0) or start_point == False or end_point == True :
         last_known_people = await get_persons(frame)
+        added_people = await detect_people_mediapipe(frame)
+        for body in added_people : 
+           last_known_people.append(body)
         Women_faces,Men_Faces = await get_gender(frame)
         start_point = True
     #  if ret_num == int(totalNoFrames) - int(fps)  :
