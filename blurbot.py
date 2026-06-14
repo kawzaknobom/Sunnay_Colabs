@@ -13,9 +13,15 @@ from pyrogram.enums import MessageEntityType
 from pyrogram.types import Message
 from ultralytics import YOLO
 from deepface import DeepFace
+import torch
+from transformers import CLIPProcessor, CLIPModel
 import cv2,os,shutil,time,audioread
+from math import ceil
 
-model = YOLO('yolov8n.pt') 
+model = YOLO('yolov8n.pt')
+clip_model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32")
+clip_processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
+texts = ["a photo of a man", "a photo of a woman"]
 
 Api_Id = 15952578
 Api_Hash = '3600ce5f8f9b9e18cba0f318fa0e3600'
@@ -189,6 +195,27 @@ async def Blur_nonmale(file_path,method,replied):
   Res_File = await blurring(file_path,method,bodies_dict)
   return Res_File
 
+async def get_gendernoface(frame,last_bodies):
+          women = []
+          for body in last_bodies:
+            # pil_crop = cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)
+            # pil_crop = Image.fromarray(pil_crop)
+            x1, y1, x2, y2 = map(int, body)
+            img_crop = frame[max(0, y1):min(frame.shape[0], y2), max(0, x1):min(frame.shape[1], x2)]
+            img_rgb = cv2.cvtColor(img_crop, cv2.COLOR_BGR2RGB)
+            inputs = clip_processor(
+            text=texts, 
+            images=img_rgb, 
+            return_tensors="pt", 
+            padding=True
+        )
+            with torch.no_grad():
+                outputs = clip_model(**inputs)
+            probs = outputs.logits_per_image.softmax(dim=1)[0]
+            gender = "man" if probs[0] > probs[1] else "woman"
+            if gender == 'woman' :
+              women.append(body)
+          return women
 
 async def Blur_Female(file_path,method,replied):
   mainDir = '/'.join(file_path.split('/')[:-1]) + '/'
@@ -252,10 +279,26 @@ async def Blur_Female(file_path,method,replied):
      if len(Women_faces) != 0 :
         women_bodies = await get_bodies(Women_faces,last_known_people)
         bodies_dict[ret_num] = women_bodies
-        Women_faces.clear()
+        
         # for body in women_bodies :
         #    x1, y1, x2, y2 = body
         #    frame[y1:y2,x1:x2] = cv2.blur(frame[y1:y2, x1:x2], (499, 499))
+     if len(last_known_people) != 0 :
+        men_bodies = await get_bodies(Men_Faces,last_known_people)
+        women_bodies = await get_bodies(Women_faces,last_known_people)
+        lest_bodies = [item for item in last_known_people if item not in men_bodies]
+        last_bodies = [item for item in lest_bodies if item not in women_bodies]
+        if len(last_bodies) != 0 : 
+          women = await get_gendernoface(frame,last_bodies)
+          if len(women) != 0 :
+              if ret_num in list(bodies_dict.keys()) :
+                for bbx in women :  
+                  bodies_dict[ret_num].append(bbx)
+              else :   
+                bodies_dict[ret_num] = women
+        
+     Women_faces.clear()
+     last_known_people.clear()
      out.write(frame)
     else:
         break 
@@ -287,20 +330,79 @@ async def blurring(file_path,method,bodies_dict):
     ret, frame = cap.read()
     if ret:
      ret_num += 1
-     for rate in list(bodies_dict.keys()) :
-      if method == 'perframe':
-         x , y = rate - int(int(fps)*0.1) , rate + int(int(fps)*0.1)
-      elif method == 'persecond':
-         x , y = rate - int(fps) , rate + int(fps)
-      elif method == 'perhalfsecond':
-         x , y = rate - int(int(fps)*0.5) , rate + int(int(fps)*0.5)
-      elif method == 'perqsecond':
-         x , y = rate - int(int(fps)*0.3) , rate + int(int(fps)*0.3)
-      if ret_num in range(x,y):
-         women_bodies = bodies_dict[rate]
-         for body in women_bodies :
-           x1, y1, x2, y2 = body
-           frame[y1:y2,x1:x2] = cv2.blur(frame[y1:y2, x1:x2], (499, 499)) 
+     frames = list(bodies_dict.keys())
+     for ind in range(0,len(frames))  :
+      if method in ['persecond','perhalfsecond','perqsecond'] :
+        if method == 'persecond':
+            
+            if (ind == 0) :
+               x = frames[ind] - int(fps)
+            elif (frames[ind] - frames[ind-1] >= int(fps)*2) :
+              x = frames[ind] - int(fps)
+            elif frames[ind] - frames[ind-1] < int(fps)*2 :
+               x = frames[ind] - int(fps)
+              # x = frames[ind] - ceil((frames[ind] - frames[ind-1])/2)
+            
+            if (ind == len(frames)-1) :
+              y = frames[ind] + int(fps)
+            elif (frames[ind+1] - frames[ind] >= int(fps)*2) :
+              y = frames[ind] + int(fps)
+            elif frames[ind+1] - frames[ind] < int(fps)*2 :
+                y = frames[ind] + int(fps)
+               
+              # y = frames[ind] + ceil((frames[ind+1] - frames[ind])/2)
+
+        elif method == 'perhalfsecond':
+            
+            if (ind == 0) :
+               x = frames[ind] - int(fps)
+            elif (frames[ind] - frames[ind-1] >= int(fps)) :
+              x = frames[ind] - int(fps)
+            elif frames[ind] - frames[ind-1] < int(fps) :
+               x = frames[ind] - int(fps)
+              # x = frames[ind] - ceil((frames[ind] - frames[ind-1])/2)
+            
+            if (ind == len(frames)-1) :
+               y = frames[ind] + int(fps)
+            elif (frames[ind+1] - frames[ind] >= int(fps)) :
+              y = frames[ind] + int(fps)
+            elif frames[ind+1] - frames[ind] < int(fps) :
+                y = frames[ind] + int(fps)
+              # y = frames[ind] + ceil((frames[ind+1] - frames[ind])/2)
+
+        elif method == 'perqsecond':
+            
+            if (ind == 0) :
+               x = frames[ind] - int(fps)
+            elif (frames[ind] - frames[ind-1] >= int(int(fps)*2/3)) :
+              x = frames[ind] - int(fps)
+            elif frames[ind] - frames[ind-1] < int(int(fps)*2/3) :
+               x = frames[ind] - int(fps)
+              # x = frames[ind] - ceil((frames[ind] - frames[ind-1])/2)
+            
+            if (ind == len(frames)-1) :
+               y = frames[ind] + int(fps)
+            elif (frames[ind+1] - frames[ind] >= int(int(fps)*2/3)) :
+              y = frames[ind] + int(fps)
+            elif frames[ind+1] - frames[ind] < int(int(fps)*2/3) :
+                y = frames[ind] + int(fps)
+              # y = frames[ind] + ceil((frames[ind+1] - frames[ind])/2)
+
+        if ret_num in range(x,y):
+            women_bodies = bodies_dict[frames[ind]]
+            for body in women_bodies :
+              x1, y1, x2, y2 = body
+              frame[y1:y2,x1:x2] = cv2.blur(frame[y1:y2, x1:x2], (499, 499)) 
+            break
+        
+      elif method == 'perframe':
+           if ret_num == frames[ind] :
+            women_bodies = bodies_dict[frames[ind]]
+            for body in women_bodies :
+              x1, y1, x2, y2 = body
+              frame[y1:y2,x1:x2] = cv2.blur(frame[y1:y2, x1:x2], (499, 499)) 
+            break
+      
      out.write(frame)
     else:
         break 
