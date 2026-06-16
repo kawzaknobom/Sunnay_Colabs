@@ -386,7 +386,7 @@ async def callback_query(CLIENT,CallbackQuery):
       Text = 'اختر غرض الحجب  '
       CHOOSE_UR_BUTTONS = [
         [InlineKeyboardButton("Blur All ppl",callback_data=f'blurppl_{Msg_Id}')],
-        [InlineKeyboardButton("Blur Specific ppl",callback_data=f'blurfml_{Msg_Id}')]
+        [InlineKeyboardButton("Blur Female",callback_data=f'blurfml_{Msg_Id}')]
           ]
       await CallbackQuery.edit_message_text(text = Text,reply_markup = InlineKeyboardMarkup(CHOOSE_UR_BUTTONS))   
 
@@ -430,9 +430,21 @@ async def callback_query(CLIENT,CallbackQuery):
   
   elif any(word in CallbackQuery.data for word in ['Dfull','Dparts']): 
     Detect_Range = Callback_List[0]
+    if len(callback_dict[User_Id]) == 6 :
+        Blur_Mode = callback_dict[User_Id][1]
+        Detect_Model = callback_dict[User_Id][2]
+        BlurObject = callback_dict[User_Id][3]
+        Gender_Model = callback_dict[User_Id][4]
+        Detect_Interval = callback_dict[User_Id][5]
+    elif len(callback_dict[User_Id]) == 5 :
+        Blur_Mode = callback_dict[User_Id][1]
+        Detect_Model = callback_dict[User_Id][2]
+        BlurObject = 'blurppl'
+        Gender_Model = 'Nomodel'
+        Detect_Interval = callback_dict[User_Id][4]
     file_msg = await Get_Msg(bot,User_Id,Msg_Id)
     if Detect_Range == 'Dparts':
-       Rangers[User_Id] = [Msg_Id,Detect_Model,BlurObject,Gender_Model,Detect_Interval,Method]
+       Rangers[User_Id] = [Msg_Id,Detect_Model,BlurObject,Gender_Model,Detect_Interval]
        Text = '''الآن أرسل المدى بهذه الصورة
          hh:mm:ss-hh:mm:ss
          ويمكنك إرسال أكثر من مدى بهذه الصورة بترك مسافة بين كل مدى
@@ -443,18 +455,7 @@ async def callback_query(CLIENT,CallbackQuery):
     else : 
       replied = await CallbackQuery.edit_message_text('جار العمل ...')
       Vid_Path = await file_msg.download(file_name=Dl_Dir)
-      if len(callback_dict[User_Id]) == 6 :
-        Blur_Mode = callback_dict[User_Id][1]
-        Detect_Model = callback_dict[User_Id][2]
-        BlurObject = callback_dict[User_Id][3]
-        Gender_Model = callback_dict[User_Id][4]
-        Detect_Interval = callback_dict[User_Id][5]
-      elif len(callback_dict[User_Id]) == 5 :
-        Blur_Mode = callback_dict[User_Id][1]
-        Detect_Model = callback_dict[User_Id][2]
-        BlurObject = 'blurppl'
-        Gender_Model = 'Nomodel'
-        Detect_Interval = callback_dict[User_Id][4]
+      
       Blurred_Vid = await Blur_Female(Vid_Path,replied,Detect_Model,BlurObject,Gender_Model,Detect_Interval,Detect_Range)
       await replied.edit_text('تمت')
       await file_msg.reply_video(Blurred_Vid)
@@ -480,8 +481,7 @@ async def refunc(client,message):
       BlurObject = Rangers[User_Id][2]
       Gender_Model = Rangers[User_Id][3]
       Detect_Interval = Rangers[User_Id][4]
-      Method = Rangers[User_Id][5]
-      Blurred_Vid = await Blur_Female(Vid_Path,replied,Detect_Model,BlurObject,Gender_Model,Ranges,Detect_Interval,Method)
+      Blurred_Vid = await Blur_Female(Vid_Path,replied,Detect_Model,BlurObject,Gender_Model,Detect_Interval,Ranges)
       await replied.edit_text('تمت')
       await file_msg.reply_video(Blurred_Vid)
       await Check_Dir(Dl_Dir)
