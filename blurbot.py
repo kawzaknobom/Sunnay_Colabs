@@ -16,6 +16,7 @@ from blur_models import Yolo_Detect,MediaPipe_Detect,DF_GDetect,Clip_GDetect
 import cv2,os,shutil,time,audioread
 from math import ceil
 
+Rangers = {}
 
 Api_Id = 15952578
 Api_Hash = '3600ce5f8f9b9e18cba0f318fa0e3600'
@@ -74,7 +75,12 @@ async def Get_Msg(bot,Chat_id,msg_id):
      
 #########
 
-async def Blur_Female(file_path,replied,Detect_Model,Gender_Model,Detect_Interval,Method):
+async def get_seconds(clock_time) :
+    hours, minutes, seconds = map(int, clock_time.split(':'))
+    total_seconds = (hours * 3600) + (minutes * 60) + seconds
+    return total_seconds
+
+async def Blur_Female(file_path,replied,Detect_Model,Gender_Model,Detect_Interval,Detect_Range,Method,Way):
   if Detect_Model == 'Yolo' :
      PPL_Detect = Yolo_Detect
   elif Detect_Model == 'MediaPipe': 
@@ -104,60 +110,79 @@ async def Blur_Female(file_path,replied,Detect_Model,Gender_Model,Detect_Interva
   start_point = False
   end_point = False
   ret_num = 0
+  if not Detect_Range == 'Dfull' :
+    Ranges = Detect_Range.split('|')
+    ranges = []
+    for Range in Ranges : 
+      splitted = Range.split('-') 
+      start = await get_seconds(splitted[0])
+      end  = await get_seconds(splitted[1])
+      ranges.append([int(start*fps),int(end*fps)])
+
+
   while(True):
     ret, frame = cap.read()
     if ret:
      ret_num += 1
-     if ret_num == int(totalNoFrames) - int(fps) :
+     if Detect_Range == 'Dfull' :
+       ispermit = True
+     else :
+        ispermit = False
+        for x in ranges :
+         if ret_num in range(x[0],x[1]):
+           ispermit = True
+           break   
+  
+     if (ret_num == int(totalNoFrames) - int(fps)) and ispermit :
         end_point = True
-     if (ret_num%(int(fps)*1) == 0) :
+     if (ret_num%(int(fps)*1) == 0) and ispermit :
         text = f"{int(ret_num/fps)} seconds of {Stream_Dur} seconds"
         try :
           await replied.edit_text(text)
         except :
            pass
-     if Detect_Interval == 'perframe' :
+     if (Detect_Interval == 'perframe') and ispermit :
         last_known_people = await PPL_Detect(frame)
         Women,Men = await Gender_Detect(frame,last_known_people)
-     elif Detect_Interval == 'persecond' :
+     elif (Detect_Interval == 'persecond') and ispermit :
       if (ret_num%(int(fps)*1) == 0) or start_point == False or end_point == True :
         last_known_people = await PPL_Detect(frame)
         Women,Men = await Gender_Detect(frame,last_known_people)
         start_point = True
-     elif Detect_Interval == 'perhalfsecond' :
+     elif (Detect_Interval == 'perhalfsecond') and ispermit :
       if (ret_num%(int(int(fps)*0.5)) == 0) or start_point == False or end_point == True :
         last_known_people = await PPL_Detect(frame)
         Women,Men = await Gender_Detect(frame,last_known_people)
         start_point = True
-     elif Detect_Interval == 'perqsecond' :
+     elif (Detect_Interval == 'perqsecond') and ispermit :
       if (ret_num%(int(int(fps)*0.3)) == 0) or start_point == False or end_point == True :
         last_known_people = await PPL_Detect(frame)
         Women,Men = await Gender_Detect(frame,last_known_people)
         start_point = True
   
-     if Method == 'blurfemale':  
+     if (Method == 'blurfemale') and ispermit :  
       if len(Women) != 0 :
         bodies_dict[ret_num] = Women.copy()
-     elif Method == 'blurnonmale':  
+     elif (Method == 'blurnonmale') and ispermit:  
        if len(Men) != 0 :
         bodies_dict[ret_num] = [item for item in last_known_people.copy() if item not in Men.copy()]
         
         # for body in women_bodies :
         #    x1, y1, x2, y2 = body
         #    frame[y1:y2,x1:x2] = cv2.blur(frame[y1:y2, x1:x2], (499, 499))
-        
-     Women.clear()
-     Men.clear()
-     last_known_people.clear()
+     if ispermit  :
+      Women.clear()
+      Men.clear()
+      last_known_people.clear()
      out.write(frame)
     else:
         break 
   cap.release()
   out.release()
-  Res_File = await blurring(file_path,Detect_Interval,bodies_dict)
+  Res_File = await blurring(file_path,Detect_Interval,bodies_dict,Way)
   return Res_File
 
-async def blurring(file_path,method,bodies_dict):
+async def blurring(file_path,method,bodies_dict,Way):
   mainDir = '/'.join(file_path.split('/')[:-1]) + '/'
   P_Name = mainDir + file_path.split('/')[-1].split('.')[0]
   Ex = file_path.split('.')[-1]
@@ -183,9 +208,12 @@ async def blurring(file_path,method,bodies_dict):
      frames = list(bodies_dict.keys())
      for ind in range(0,len(frames))  :
       if method in ['persecond','perhalfsecond','perqsecond'] :
-        if method == 'persecond':
-            x = frames[ind] - int(fps)
-            y = frames[ind] + int(fps)
+        x = frames[ind] - int(fps)
+        y = frames[ind] + int(fps)
+
+        # if method == 'persecond':
+        #     x = frames[ind] - int(fps)
+        #     y = frames[ind] + int(fps)
             
             # if (ind == 0) :
             #    x = frames[ind] - int(fps)
@@ -204,9 +232,9 @@ async def blurring(file_path,method,bodies_dict):
                
               # y = frames[ind] + ceil((frames[ind+1] - frames[ind])/2)
 
-        elif method == 'perhalfsecond':
-            x = frames[ind] - int(fps)
-            y = frames[ind] + int(fps)
+        # elif method == 'perhalfsecond':
+        #     x = frames[ind] - int(fps)
+        #     y = frames[ind] + int(fps)
             # if (ind == 0) :
             #    x = frames[ind] - int(fps)
             # elif (frames[ind] - frames[ind-1] >= int(fps)) :
@@ -223,9 +251,9 @@ async def blurring(file_path,method,bodies_dict):
             #     y = frames[ind] + int(fps)
               # y = frames[ind] + ceil((frames[ind+1] - frames[ind])/2)
 
-        elif method == 'perqsecond':
-            x = frames[ind] - int(fps)
-            y = frames[ind] + int(fps)
+        # elif method == 'perqsecond':
+        #     x = frames[ind] - int(fps)
+        #     y = frames[ind] + int(fps)
             # if (ind == 0) :
             #    x = frames[ind] - int(fps)
             # elif (frames[ind] - frames[ind-1] >= int(int(fps)*2/3)) :
@@ -243,18 +271,24 @@ async def blurring(file_path,method,bodies_dict):
               # y = frames[ind] + ceil((frames[ind+1] - frames[ind])/2)
 
         if ret_num in range(x,y):
+          if Way == 'blurpor' : 
             women_bodies = bodies_dict[frames[ind]]
             for body in women_bodies :
               x1, y1, x2, y2 = body
               frame[y1:y2,x1:x2] = cv2.blur(frame[y1:y2, x1:x2], (499, 499)) 
-            break
-        
+          elif Way == 'blurfull' : 
+              frame = cv2.blur(frame, (499, 499))
+          break
+
       elif method == 'perframe':
            if ret_num == frames[ind] :
-            women_bodies = bodies_dict[frames[ind]]
-            for body in women_bodies :
-              x1, y1, x2, y2 = body
-              frame[y1:y2,x1:x2] = cv2.blur(frame[y1:y2, x1:x2], (499, 499)) 
+            if Way == 'blurpor' :
+              women_bodies = bodies_dict[frames[ind]]
+              for body in women_bodies :
+                x1, y1, x2, y2 = body
+                frame[y1:y2,x1:x2] = cv2.blur(frame[y1:y2, x1:x2], (499, 499)) 
+            elif Way == 'blurfull' : 
+              frame = cv2.blur(frame, (499, 499))
             break
       
      out.write(frame)
@@ -306,37 +340,95 @@ async def callback_query(CLIENT,CallbackQuery):
 
   elif len(Callback_List) == 3 : 
     Gender_Model = Callback_List[1]
-    Text = 'اختر طريقة البلور'
+    Method = Callback_List[2]
+    Text = 'اختر مدة التعرف '
     CHOOSE_UR_BUTTONS = [
-      [InlineKeyboardButton("Blur Female",callback_data=f'{Detect_Model}_{Gender_Model}_blurfemale_{Msg_Id}')]
+      [InlineKeyboardButton("Per Second",callback_data=f'{Detect_Model}_{Gender_Model}_persecond_{Msg_Id}')],
+      [InlineKeyboardButton("Per Half Second",callback_data=f'{Detect_Model}_{Gender_Model}_perhalfsecond_{Msg_Id}')],
+      [InlineKeyboardButton("Per Quarter Second",callback_data=f'{Detect_Model}_{Gender_Model}_perqsecond_{Msg_Id}')],
+      [InlineKeyboardButton("Per Frame",callback_data=f'{Detect_Model}_{Gender_Model}_perframe_{Msg_Id}')]
+         ]
+    await CallbackQuery.edit_message_text(text = Text,reply_markup = InlineKeyboardMarkup(CHOOSE_UR_BUTTONS))   
+  
+  elif len(Callback_List) == 4 : 
+    Gender_Model = Callback_List[1]
+    Detect_Interval = Callback_List[2]
+    Text = 'اختر نوع البلور'
+    CHOOSE_UR_BUTTONS = [
+      [InlineKeyboardButton("Blur Female",callback_data=f'{Detect_Model}_{Gender_Model}_{Detect_Interval}_blurfemale_{Msg_Id}')]
        ]
     # [InlineKeyboardButton("Blur Non-Male",callback_data=f'{Detect_Model}_{Gender_Model}_blurnonmale_{Msg_Id}')]
         
     await CallbackQuery.edit_message_text(text = Text,reply_markup = InlineKeyboardMarkup(CHOOSE_UR_BUTTONS))   
-
-  elif len(Callback_List) == 4 : 
-    Gender_Model = Callback_List[1]
-    Method = Callback_List[2]
-    Text = 'اختر مدة التعرف '
-    CHOOSE_UR_BUTTONS = [
-      [InlineKeyboardButton("Per Second",callback_data=f'{Detect_Model}_{Gender_Model}_{Method}_persecond_{Msg_Id}')],
-      [InlineKeyboardButton("Per Half Second",callback_data=f'{Detect_Model}_{Gender_Model}_{Method}_perhalfsecond_{Msg_Id}')],
-      [InlineKeyboardButton("Per Quarter Second",callback_data=f'{Detect_Model}_{Gender_Model}_{Method}_perqsecond_{Msg_Id}')],
-      [InlineKeyboardButton("Per Frame",callback_data=f'{Detect_Model}_{Gender_Model}_{Method}_perframe_{Msg_Id}')]
-         ]
-    await CallbackQuery.edit_message_text(text = Text,reply_markup = InlineKeyboardMarkup(CHOOSE_UR_BUTTONS))   
   
   elif len(Callback_List) == 5 : 
     Gender_Model = Callback_List[1]
-    Method = Callback_List[2]
-    Detect_Interval = Callback_List[3]
+    Detect_Interval = Callback_List[2]
+    Method = Callback_List[3]
+    Text = 'اختر طريقة البلور'
+    CHOOSE_UR_BUTTONS = [
+      [InlineKeyboardButton("Blur Portions",callback_data=f'{Detect_Model}_{Gender_Model}_{Detect_Interval}_{Method}_blurpor_{Msg_Id}')],
+    [InlineKeyboardButton("Blur Full Frame",callback_data=f'{Detect_Model}_{Gender_Model}_{Detect_Interval}_{Method}_blurfull_{Msg_Id}')]
+       ]
+        
+    await CallbackQuery.edit_message_text(text = Text,reply_markup = InlineKeyboardMarkup(CHOOSE_UR_BUTTONS))   
+
+  elif len(Callback_List) == 6 : 
+    Gender_Model = Callback_List[1]
+    Detect_Interval = Callback_List[2]
+    Method = Callback_List[3]
+    Way = Callback_List[4]
+    Text = 'اختر نمط البلور'
+    CHOOSE_UR_BUTTONS = [
+    [InlineKeyboardButton("Detect Full Vid",callback_data=f'{Detect_Model}_{Gender_Model}_{Detect_Interval}_{Method}_{Way}_Dfull_{Msg_Id}')],
+      [InlineKeyboardButton("Detect Ranges",callback_data=f'{Detect_Model}_{Gender_Model}_{Detect_Interval}_{Method}_{Way}_Dparts_{Msg_Id}')]
+       ]
+        
+    await CallbackQuery.edit_message_text(text = Text,reply_markup = InlineKeyboardMarkup(CHOOSE_UR_BUTTONS))   
+
+  elif len(Callback_List) == 7 : 
+    Gender_Model = Callback_List[1]
+    Detect_Interval = Callback_List[2]
+    Method = Callback_List[3]
+    Way = Callback_List[4]
+    Detect_Range = Callback_List[5]
     file_msg = await Get_Msg(bot,User_Id,Msg_Id)
-    replied = await CallbackQuery.edit_message_text('جار العمل ...')
-    Vid_Path = await file_msg.download(file_name=Dl_Dir)
-    Blurred_Vid = await Blur_Female(Vid_Path,replied,Detect_Model,Gender_Model,Detect_Interval,Method)
-    await replied.edit_text('تمت')
-    await file_msg.reply_video(Blurred_Vid)
-    await Check_Dir(Dl_Dir)
+    if Detect_Range == 'Dparts':
+       Rangers[User_Id] = [Msg_Id,Detect_Model,Gender_Model,Detect_Interval,Method,Way]
+       Text = '''الآن أرسل المدى بهذه الصورة
+         hh:mm:ss-hh:mm:ss
+         ويمكنك إرسال أكثر من مدى بهذه الصورة بترك مسافة بين كل مدى
+         hh:mm:ss-hh:mm:ss hh:mm:ss-hh:mm:ss hh:mm:ss-hh:mm:ss
+         '''
+       await CallbackQuery.message.delete()
+       await file_msg.reply_text(Text,reply_markup=ForceReply(True),reply_to_message_id=file_msg.id)
+    else : 
+      replied = await CallbackQuery.edit_message_text('جار العمل ...')
+      Vid_Path = await file_msg.download(file_name=Dl_Dir)
+      Blurred_Vid = await Blur_Female(Vid_Path,replied,Detect_Model,Gender_Model,Detect_Interval,Detect_Range,Method,Way)
+      await replied.edit_text('تمت')
+      await file_msg.reply_video(Blurred_Vid)
+      await Check_Dir(Dl_Dir)
+
+
+@bot.on_message(filters.private & filters.reply)
+async def refunc(client,message):
+   if (message.reply_to_message.reply_markup) and isinstance(message.reply_to_message.reply_markup, ForceReply)  :
+    User_Id = message.from_user.id
+    if User_Id in list(Rangers.keys()) : 
+      Msg_Text = message.text
+      reply_id = message.reply_to_message_id
+      reply_msg = await Get_Msg(bot,User_Id,reply_id)
+      await message.delete()
+      await reply_msg.delete()
+      Ranges = Msg_Text.replace(' ','|')
+      file_msg = await Get_Msg(bot,User_Id,Rangers[User_Id][0])
+      replied = await file_msg.reply('جار العمل ...')
+      Vid_Path = await file_msg.download(file_name=Dl_Dir)
+      Blurred_Vid = await Blur_Female(Vid_Path,replied,Rangers[User_Id][1],Rangers[User_Id][2],Rangers[User_Id][3],Ranges,Rangers[User_Id][4],Rangers[User_Id][5])
+      await replied.edit_text('تمت')
+      await file_msg.reply_video(Blurred_Vid)
+      await Check_Dir(Dl_Dir)
 
 
 def main():
