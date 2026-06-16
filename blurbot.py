@@ -308,9 +308,10 @@ async def callback_query(CLIENT,CallbackQuery):
     Gender_Model = Callback_List[1]
     Text = 'اختر طريقة البلور'
     CHOOSE_UR_BUTTONS = [
-      [InlineKeyboardButton("Blur Female",callback_data=f'{Detect_Model}_{Gender_Model}_blurfemale_{Msg_Id}')],
-      [InlineKeyboardButton("Blur Non-Male",callback_data=f'{Detect_Model}_{Gender_Model}_blurnonmale_{Msg_Id}')]
-         ]
+      [InlineKeyboardButton("Blur Female",callback_data=f'{Detect_Model}_{Gender_Model}_blurfemale_{Msg_Id}')]
+       ]
+    # [InlineKeyboardButton("Blur Non-Male",callback_data=f'{Detect_Model}_{Gender_Model}_blurnonmale_{Msg_Id}')]
+        
     await CallbackQuery.edit_message_text(text = Text,reply_markup = InlineKeyboardMarkup(CHOOSE_UR_BUTTONS))   
 
   elif len(Callback_List) == 4 : 
