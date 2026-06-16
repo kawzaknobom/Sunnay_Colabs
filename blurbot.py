@@ -221,21 +221,21 @@ async def Blur_Female(file_path,replied,Detect_Model,Gender_Model,Detect_Interva
            pass
      if Detect_Interval == 'perframe' :
         last_known_people = await PPL_Detect(frame)
-        Women,Men = await Gender_Detect(frame)
+        Women,Men = await Gender_Detect(frame,last_known_people)
      elif Detect_Interval == 'persecond' :
       if (ret_num%(int(fps)*1) == 0) or start_point == False or end_point == True :
         last_known_people = await PPL_Detect(frame)
-        Women,Men = await Gender_Detect(frame)
+        Women,Men = await Gender_Detect(frame,last_known_people)
         start_point = True
      elif Detect_Interval == 'perhalfsecond' :
       if (ret_num%(int(int(fps)*0.5)) == 0) or start_point == False or end_point == True :
         last_known_people = await PPL_Detect(frame)
-        Women,Men = await Gender_Detect(frame)
+        Women,Men = await Gender_Detect(frame,last_known_people)
         start_point = True
      elif Detect_Interval == 'perqsecond' :
       if (ret_num%(int(int(fps)*0.3)) == 0) or start_point == False or end_point == True :
         last_known_people = await PPL_Detect(frame)
-        Women,Men = await Gender_Detect(frame)
+        Women,Men = await Gender_Detect(frame,last_known_people)
         start_point = True
     #  if ret_num == int(totalNoFrames) - int(fps)  :
     #     end_point = False
@@ -431,7 +431,7 @@ async def callback_query(CLIENT,CallbackQuery):
   elif len(Callback_List) == 5 : 
     Gender_Model = Callback_List[1]
     Method = Callback_List[2]
-    Detect_Interval = Callback_List[2]
+    Detect_Interval = Callback_List[3]
     file_msg = await Get_Msg(bot,User_Id,Msg_Id)
     replied = await CallbackQuery.edit_message_text('جار العمل ...')
     Vid_Path = await file_msg.download(file_name=Dl_Dir)
