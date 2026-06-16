@@ -72,109 +72,6 @@ async def Get_Msg(bot,Chat_id,msg_id):
       pass
 
      
-
-#########
-
-
-async def get_bodies(facebboxlist,bodybboxlist):
-  bodies = []
-  for bodybbox in bodybboxlist :
-      bx1, by1, bx2, by2 = bodybbox
-      for facebbox in facebboxlist :
-        fx1, fy1, fx2, fy2 = facebbox
-        if (fx1 >= bx1 and fx2 <= bx2 and fy1 >= fy1 and fy2 <= by2) :
-          bodies.append(bodybbox)
-  return bodies
-
-
-async def Blur_nonmale(file_path,method,replied):
-  mainDir = '/'.join(file_path.split('/')[:-1]) + '/'
-  P_Name = mainDir + file_path.split('/')[-1].split('.')[0]
-  Ex = file_path.split('.')[-1]
-  Res_File = f"{P_Name}_Blurred.{Ex}"
-  file_path = await Media_Compress(file_path)
-  cap = cv2.VideoCapture(file_path)
-  if not cap.isOpened():
-    raise ValueError("Error opening video file")
-  fps = cap.get(cv2.CAP_PROP_FPS)
-  totalNoFrames = cap.get(cv2.CAP_PROP_FRAME_COUNT)
-  durationInSeconds = totalNoFrames // fps
-  Stream_Dur = int(durationInSeconds)
-  width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-  height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-  fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-  out = cv2.VideoWriter(Res_File, fourcc, fps, (width, height))
-  bodies_dict = {}
-  last_update_time = 0
-  start_point = False
-  end_point = False
-  ret_num = 0
-  while(True):
-    ret, frame = cap.read()
-    if ret:
-     ret_num += 1
-     if ret_num == int(totalNoFrames) - int(fps) :
-        end_point = True
-     if (ret_num%(int(fps)*1) == 0) :
-        text = f"{int(ret_num/fps)} seconds of {Stream_Dur} seconds"
-        try :
-          await replied.edit_text(text)
-        except :
-           pass
-     if method == 'perframe' :
-        last_known_people = await Yolo_Detect(frame)
-        added_people = await MediaPipe_Detect(frame)
-        for body in added_people : 
-           last_known_people.append(body)
-        Women_faces,Men_Faces = await DF_GDetect(frame)
-     elif method == 'persecond' :
-      if (ret_num%(int(fps)*1) == 0) or start_point == False or end_point == True :
-        last_known_people = await Yolo_Detect(frame)
-        added_people = await MediaPipe_Detect(frame)
-        for body in added_people : 
-           last_known_people.append(body)
-        Women_faces,Men_Faces = await DF_GDetect(frame)
-        start_point = True
-     elif method == 'perhalfsecond' :
-      if (ret_num%(int(int(fps)*0.5)) == 0) or start_point == False or end_point == True :
-        last_known_people = await Yolo_Detect(frame)
-        added_people = await MediaPipe_Detect(frame)
-        for body in added_people : 
-           last_known_people.append(body)
-        Women_faces,Men_Faces = await DF_GDetect(frame)
-        start_point = True
-     elif method == 'perqsecond' :
-      if (ret_num%(int(int(fps)*0.3)) == 0) or start_point == False or end_point == True :
-        last_known_people = await Yolo_Detect(frame)
-        added_people = await MediaPipe_Detect(frame)
-        for body in added_people : 
-           last_known_people.append(body)
-        Women_faces,Men_Faces = await DF_GDetect(frame)
-        start_point = True
-    #  if ret_num == int(totalNoFrames) - int(fps)  :
-    #     end_point = False
-        # if len(Women_faces) == 0 :
-        #   start_point = False      
-        # else :
-        #   start_point = True 
-      
-     if len(last_known_people) != 0 :
-        men_bodies = await get_bodies(Men_Faces,last_known_people)
-        lest_bodies = [item for item in last_known_people if item not in men_bodies]
-        bodies_dict[ret_num] = lest_bodies
-        last_known_people.clear()
-        # for body in women_bodies :
-        #    x1, y1, x2, y2 = body
-        #    frame[y1:y2,x1:x2] = cv2.blur(frame[y1:y2, x1:x2], (499, 499))
-     out.write(frame)
-    else:
-        break 
-  cap.release()
-  out.release()
-  Res_File = await blurring(file_path,method,bodies_dict)
-  return Res_File
-
-
 #########
 
 async def Blur_Female(file_path,replied,Detect_Model,Gender_Model,Detect_Interval,Method):
@@ -237,24 +134,20 @@ async def Blur_Female(file_path,replied,Detect_Model,Gender_Model,Detect_Interva
         last_known_people = await PPL_Detect(frame)
         Women,Men = await Gender_Detect(frame,last_known_people)
         start_point = True
-    #  if ret_num == int(totalNoFrames) - int(fps)  :
-    #     end_point = False
-        # if len(Women_faces) == 0 :
-        #   start_point = False      
-        # else :
-        #   start_point = True 
+  
      if Method == 'blurfemale':  
       if len(Women) != 0 :
-        bodies_dict[ret_num] = Women
+        bodies_dict[ret_num] = Women.copy()
      elif Method == 'blurnonmale':  
        if len(Men) != 0 :
-        bodies_dict[ret_num] = [item for item in last_known_people if item not in Men]
+        bodies_dict[ret_num] = [item for item in last_known_people.copy() if item not in Men.copy()]
         
         # for body in women_bodies :
         #    x1, y1, x2, y2 = body
         #    frame[y1:y2,x1:x2] = cv2.blur(frame[y1:y2, x1:x2], (499, 499))
         
      Women.clear()
+     Men.clear()
      last_known_people.clear()
      out.write(frame)
     else:
@@ -291,58 +184,62 @@ async def blurring(file_path,method,bodies_dict):
      for ind in range(0,len(frames))  :
       if method in ['persecond','perhalfsecond','perqsecond'] :
         if method == 'persecond':
+            x = frames[ind] - int(fps)
+            y = frames[ind] + int(fps)
             
-            if (ind == 0) :
-               x = frames[ind] - int(fps)
-            elif (frames[ind] - frames[ind-1] >= int(fps)*2) :
-              x = frames[ind] - int(fps)
-            elif frames[ind] - frames[ind-1] < int(fps)*2 :
-               x = frames[ind] - int(fps)
-              # x = frames[ind] - ceil((frames[ind] - frames[ind-1])/2)
+            # if (ind == 0) :
+            #    x = frames[ind] - int(fps)
+            # elif (frames[ind] - frames[ind-1] >= int(fps)*2) :
+            #   x = frames[ind] - int(fps)
+            # elif frames[ind] - frames[ind-1] < int(fps)*2 :
+            #    x = frames[ind] - int(fps)
+            #   # x = frames[ind] - ceil((frames[ind] - frames[ind-1])/2)
             
-            if (ind == len(frames)-1) :
-              y = frames[ind] + int(fps)
-            elif (frames[ind+1] - frames[ind] >= int(fps)*2) :
-              y = frames[ind] + int(fps)
-            elif frames[ind+1] - frames[ind] < int(fps)*2 :
-                y = frames[ind] + int(fps)
+            # if (ind == len(frames)-1) :
+            #   y = frames[ind] + int(fps)
+            # elif (frames[ind+1] - frames[ind] >= int(fps)*2) :
+            #   y = frames[ind] + int(fps)
+            # elif frames[ind+1] - frames[ind] < int(fps)*2 :
+            #     y = frames[ind] + int(fps)
                
               # y = frames[ind] + ceil((frames[ind+1] - frames[ind])/2)
 
         elif method == 'perhalfsecond':
+            x = frames[ind] - int(fps)
+            y = frames[ind] + int(fps)
+            # if (ind == 0) :
+            #    x = frames[ind] - int(fps)
+            # elif (frames[ind] - frames[ind-1] >= int(fps)) :
+            #   x = frames[ind] - int(fps)
+            # elif frames[ind] - frames[ind-1] < int(fps) :
+            #    x = frames[ind] - int(fps)
+            #   # x = frames[ind] - ceil((frames[ind] - frames[ind-1])/2)
             
-            if (ind == 0) :
-               x = frames[ind] - int(fps)
-            elif (frames[ind] - frames[ind-1] >= int(fps)) :
-              x = frames[ind] - int(fps)
-            elif frames[ind] - frames[ind-1] < int(fps) :
-               x = frames[ind] - int(fps)
-              # x = frames[ind] - ceil((frames[ind] - frames[ind-1])/2)
-            
-            if (ind == len(frames)-1) :
-               y = frames[ind] + int(fps)
-            elif (frames[ind+1] - frames[ind] >= int(fps)) :
-              y = frames[ind] + int(fps)
-            elif frames[ind+1] - frames[ind] < int(fps) :
-                y = frames[ind] + int(fps)
+            # if (ind == len(frames)-1) :
+            #    y = frames[ind] + int(fps)
+            # elif (frames[ind+1] - frames[ind] >= int(fps)) :
+            #   y = frames[ind] + int(fps)
+            # elif frames[ind+1] - frames[ind] < int(fps) :
+            #     y = frames[ind] + int(fps)
               # y = frames[ind] + ceil((frames[ind+1] - frames[ind])/2)
 
         elif method == 'perqsecond':
+            x = frames[ind] - int(fps)
+            y = frames[ind] + int(fps)
+            # if (ind == 0) :
+            #    x = frames[ind] - int(fps)
+            # elif (frames[ind] - frames[ind-1] >= int(int(fps)*2/3)) :
+            #   x = frames[ind] - int(fps)
+            # elif frames[ind] - frames[ind-1] < int(int(fps)*2/3) :
+            #    x = frames[ind] - int(fps)
+            #   # x = frames[ind] - ceil((frames[ind] - frames[ind-1])/2)
             
-            if (ind == 0) :
-               x = frames[ind] - int(fps)
-            elif (frames[ind] - frames[ind-1] >= int(int(fps)*2/3)) :
-              x = frames[ind] - int(fps)
-            elif frames[ind] - frames[ind-1] < int(int(fps)*2/3) :
-               x = frames[ind] - int(fps)
-              # x = frames[ind] - ceil((frames[ind] - frames[ind-1])/2)
-            
-            if (ind == len(frames)-1) :
-               y = frames[ind] + int(fps)
-            elif (frames[ind+1] - frames[ind] >= int(int(fps)*2/3)) :
-              y = frames[ind] + int(fps)
-            elif frames[ind+1] - frames[ind] < int(int(fps)*2/3) :
-                y = frames[ind] + int(fps)
+            # if (ind == len(frames)-1) :
+            #    y = frames[ind] + int(fps)
+            # elif (frames[ind+1] - frames[ind] >= int(int(fps)*2/3)) :
+            #   y = frames[ind] + int(fps)
+            # elif frames[ind+1] - frames[ind] < int(int(fps)*2/3) :
+            #     y = frames[ind] + int(fps)
               # y = frames[ind] + ceil((frames[ind+1] - frames[ind])/2)
 
         if ret_num in range(x,y):
