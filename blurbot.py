@@ -11,33 +11,11 @@ from pyrogram.types import InlineKeyboardMarkup , InlineKeyboardButton , Callbac
 from pyrogram.errors import FloodWait
 from pyrogram.enums import MessageEntityType
 from pyrogram.types import Message
-from ultralytics import YOLO
-from deepface import DeepFace
-import torch
-from transformers import CLIPProcessor, CLIPModel
+from blur_models import Yolo_Detect,MediaPipe_Detect,DF_GDetect,Clip_GDetect
+
 import cv2,os,shutil,time,audioread
 from math import ceil
-import mediapipe as mp
-from mediapipe.tasks import python
-from mediapipe.tasks.python import vision
 
-model = YOLO('yolov8n.pt')
-clip_model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32")
-clip_processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
-texts = ["a photo of a man", "a photo of a woman"]
-
-model_path = 'efficientdet.tflite'
-BaseOptions = mp.tasks.BaseOptions
-ObjectDetector = mp.tasks.vision.ObjectDetector
-ObjectDetectorOptions = mp.tasks.vision.ObjectDetectorOptions
-VisionRunningMode = mp.tasks.vision.RunningMode
-options = ObjectDetectorOptions(
-    base_options=BaseOptions(model_asset_path=model_path),
-    score_threshold=0.5, # Minimum confidence
-    running_mode=VisionRunningMode.IMAGE
-)
-
-mp_detector =  ObjectDetector.create_from_options(options)
 
 Api_Id = 15952578
 Api_Hash = '3600ce5f8f9b9e18cba0f318fa0e3600'
@@ -93,62 +71,10 @@ async def Get_Msg(bot,Chat_id,msg_id):
   except Exception as err : 
       pass
 
-   
-async def detect_people_mediapipe(frame):
-    people = []
-    bgr_image = frame
-    h, w, _ = bgr_image.shape
-    
-    # MediaPipe expects RGB format
-    rgb_image = cv2.cvtColor(bgr_image, cv2.COLOR_BGR2RGB)
-    mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_image)
+     
 
-    detection_result = mp_detector.detect(mp_image)
+#########
 
-    for detection in detection_result.detections:
-        category = detection.categories[0]
-        if category.category_name == 'person':
-            bbox = detection.bounding_box
-            xmin = bbox.origin_x
-            ymin = bbox.origin_y
-            width = bbox.width
-            height = bbox.height
-            bbbox = (xmin, ymin , xmin + width, ymin + height)
-            people.append(bbbox)
-    return people
-            
-            
-async def get_gender(frame):
-    Women_Faces = []
-    Men_Faces = []
-    analysis = DeepFace.analyze(frame, actions=['gender'], detector_backend='retinaface',enforce_detection =False)
-    for face in analysis :
-       region = face['region']
-       x, y, w, h = region['x'], region['y'], region['w'], region['h']
-       if face['dominant_gender'] == 'Woman':
-        Women_Faces.append((x,y,w,h))
-       else : 
-        Men_Faces.append((x,y,w,h))
-    return Women_Faces,Men_Faces
-
-async def get_persons(frame):
-   last_known_people = []
-   results = model.track(frame, persist=True, tracker="/content/Sunnay_Colabs/custom_tracker.yaml", classes=[0])
-   for r in results:
-         if r.boxes.id is not None:
-            for box, track_id in zip(r.boxes.xyxy, r.boxes.id):
-                track_id = int(track_id)
-                x1, y1, x2, y2 = map(int, box)
-                last_known_people.append((x1, y1, x2, y2))
-   return last_known_people
-
-async def is_body(facebbox,bodybboxlist):
-            fx1, fy1, fx2, fy2 = facebbox
-            for bodybbox in bodybboxlist :
-               bx1, by1, bx2, by2 = bodybbox
-               if (fx1 >= bx1 and fx2 <= bx2 and fy1 >= fy1 and fy2 <= by2) :
-                  return bodybbox
-            return False
 
 async def get_bodies(facebboxlist,bodybboxlist):
   bodies = []
@@ -196,34 +122,34 @@ async def Blur_nonmale(file_path,method,replied):
         except :
            pass
      if method == 'perframe' :
-        last_known_people = await get_persons(frame)
-        added_people = await detect_people_mediapipe(frame)
+        last_known_people = await Yolo_Detect(frame)
+        added_people = await MediaPipe_Detect(frame)
         for body in added_people : 
            last_known_people.append(body)
-        Women_faces,Men_Faces = await get_gender(frame)
+        Women_faces,Men_Faces = await DF_GDetect(frame)
      elif method == 'persecond' :
       if (ret_num%(int(fps)*1) == 0) or start_point == False or end_point == True :
-        last_known_people = await get_persons(frame)
-        added_people = await detect_people_mediapipe(frame)
+        last_known_people = await Yolo_Detect(frame)
+        added_people = await MediaPipe_Detect(frame)
         for body in added_people : 
            last_known_people.append(body)
-        Women_faces,Men_Faces = await get_gender(frame)
+        Women_faces,Men_Faces = await DF_GDetect(frame)
         start_point = True
      elif method == 'perhalfsecond' :
       if (ret_num%(int(int(fps)*0.5)) == 0) or start_point == False or end_point == True :
-        last_known_people = await get_persons(frame)
-        added_people = await detect_people_mediapipe(frame)
+        last_known_people = await Yolo_Detect(frame)
+        added_people = await MediaPipe_Detect(frame)
         for body in added_people : 
            last_known_people.append(body)
-        Women_faces,Men_Faces = await get_gender(frame)
+        Women_faces,Men_Faces = await DF_GDetect(frame)
         start_point = True
      elif method == 'perqsecond' :
       if (ret_num%(int(int(fps)*0.3)) == 0) or start_point == False or end_point == True :
-        last_known_people = await get_persons(frame)
-        added_people = await detect_people_mediapipe(frame)
+        last_known_people = await Yolo_Detect(frame)
+        added_people = await MediaPipe_Detect(frame)
         for body in added_people : 
            last_known_people.append(body)
-        Women_faces,Men_Faces = await get_gender(frame)
+        Women_faces,Men_Faces = await DF_GDetect(frame)
         start_point = True
     #  if ret_num == int(totalNoFrames) - int(fps)  :
     #     end_point = False
@@ -248,29 +174,18 @@ async def Blur_nonmale(file_path,method,replied):
   Res_File = await blurring(file_path,method,bodies_dict)
   return Res_File
 
-async def get_gendernoface(frame,last_bodies):
-          women = []
-          for body in last_bodies:
-            # pil_crop = cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)
-            # pil_crop = Image.fromarray(pil_crop)
-            x1, y1, x2, y2 = map(int, body)
-            img_crop = frame[max(0, y1):min(frame.shape[0], y2), max(0, x1):min(frame.shape[1], x2)]
-            img_rgb = cv2.cvtColor(img_crop, cv2.COLOR_BGR2RGB)
-            inputs = clip_processor(
-            text=texts, 
-            images=img_rgb, 
-            return_tensors="pt", 
-            padding=True
-        )
-            with torch.no_grad():
-                outputs = clip_model(**inputs)
-            probs = outputs.logits_per_image.softmax(dim=1)[0]
-            gender = "man" if probs[0] > probs[1] else "woman"
-            if gender == 'woman' :
-              women.append(body)
-          return women
 
-async def Blur_Female(file_path,method,replied):
+#########
+
+async def Blur_Female(file_path,replied,Detect_Model,Gender_Model,Detect_Interval,Method):
+  if Detect_Model == 'Yolo' :
+     PPL_Detect = Yolo_Detect
+  elif Detect_Model == 'MediaPipe': 
+     PPL_Detect = MediaPipe_Detect
+  if Gender_Model == 'DeepFace' :
+     Gender_Detect = DF_GDetect
+  elif Gender_Model == 'Clip' :
+     Gender_Detect = Clip_GDetect
   mainDir = '/'.join(file_path.split('/')[:-1]) + '/'
   P_Name = mainDir + file_path.split('/')[-1].split('.')[0]
   Ex = file_path.split('.')[-1]
@@ -304,35 +219,23 @@ async def Blur_Female(file_path,method,replied):
           await replied.edit_text(text)
         except :
            pass
-     if method == 'perframe' :
-        last_known_people = await get_persons(frame)
-        added_people = await detect_people_mediapipe(frame)
-        for body in added_people : 
-           last_known_people.append(body)
-        Women_faces,Men_Faces = await get_gender(frame)
-     elif method == 'persecond' :
+     if Detect_Interval == 'perframe' :
+        last_known_people = await PPL_Detect(frame)
+        Women,Men = await Gender_Detect(frame)
+     elif Detect_Interval == 'persecond' :
       if (ret_num%(int(fps)*1) == 0) or start_point == False or end_point == True :
-        last_known_people = await get_persons(frame)
-        added_people = await detect_people_mediapipe(frame)
-        for body in added_people : 
-           last_known_people.append(body)
-        Women_faces,Men_Faces = await get_gender(frame)
+        last_known_people = await PPL_Detect(frame)
+        Women,Men = await Gender_Detect(frame)
         start_point = True
-     elif method == 'perhalfsecond' :
+     elif Detect_Interval == 'perhalfsecond' :
       if (ret_num%(int(int(fps)*0.5)) == 0) or start_point == False or end_point == True :
-        last_known_people = await get_persons(frame)
-        added_people = await detect_people_mediapipe(frame)
-        for body in added_people : 
-           last_known_people.append(body)
-        Women_faces,Men_Faces = await get_gender(frame)
+        last_known_people = await PPL_Detect(frame)
+        Women,Men = await Gender_Detect(frame)
         start_point = True
-     elif method == 'perqsecond' :
+     elif Detect_Interval == 'perqsecond' :
       if (ret_num%(int(int(fps)*0.3)) == 0) or start_point == False or end_point == True :
-        last_known_people = await get_persons(frame)
-        added_people = await detect_people_mediapipe(frame)
-        for body in added_people : 
-           last_known_people.append(body)
-        Women_faces,Men_Faces = await get_gender(frame)
+        last_known_people = await PPL_Detect(frame)
+        Women,Men = await Gender_Detect(frame)
         start_point = True
     #  if ret_num == int(totalNoFrames) - int(fps)  :
     #     end_point = False
@@ -340,36 +243,25 @@ async def Blur_Female(file_path,method,replied):
         #   start_point = False      
         # else :
         #   start_point = True 
-      
-     if len(Women_faces) != 0 :
-        women_bodies = await get_bodies(Women_faces,last_known_people)
-        bodies_dict[ret_num] = women_bodies
+     if Method == 'blurfemale':  
+      if len(Women) != 0 :
+        bodies_dict[ret_num] = Women
+     elif Method == 'blurnonmale':  
+       if len(Men) != 0 :
+        bodies_dict[ret_num] = [item for item in last_known_people if item not in Men]
         
         # for body in women_bodies :
         #    x1, y1, x2, y2 = body
         #    frame[y1:y2,x1:x2] = cv2.blur(frame[y1:y2, x1:x2], (499, 499))
-     if len(last_known_people) != 0 :
-        men_bodies = await get_bodies(Men_Faces,last_known_people)
-        women_bodies = await get_bodies(Women_faces,last_known_people)
-        lest_bodies = [item for item in last_known_people if item not in men_bodies]
-        last_bodies = [item for item in lest_bodies if item not in women_bodies]
-        if len(last_bodies) != 0 : 
-          women = await get_gendernoface(frame,last_bodies)
-          if len(women) != 0 :
-              if ret_num in list(bodies_dict.keys()) :
-                for bbx in women :  
-                  bodies_dict[ret_num].append(bbx)
-              else :   
-                bodies_dict[ret_num] = women
         
-     Women_faces.clear()
+     Women.clear()
      last_known_people.clear()
      out.write(frame)
     else:
         break 
   cap.release()
   out.release()
-  Res_File = await blurring(file_path,method,bodies_dict)
+  Res_File = await blurring(file_path,Detect_Interval,bodies_dict)
   return Res_File
 
 async def blurring(file_path,method,bodies_dict):
@@ -491,10 +383,11 @@ async def _telegram_file(client, message):
   #  Reply = await message.reply('جار العمل ...')
   #  Vid_Path = await message.download(file_name=Dl_Dir)
   #  Blurred_Vid = await Blur_Female(Vid_Path)
+   Text = 'اختر نموذج التعرف'
    CHOOSE_UR_BUTTONS = [
-      [InlineKeyboardButton("Blur Female",callback_data='blurfemale'+'_'+str(message.id))],
-      [InlineKeyboardButton("Blur Non-Male",callback_data='blurnonmale'+'_'+str(message.id))] ]
-   await message.reply(text = "اختر ما يناسب",reply_markup = InlineKeyboardMarkup(CHOOSE_UR_BUTTONS))
+      [InlineKeyboardButton("Yolo",callback_data=f'Yolo_{message.id}')],
+      [InlineKeyboardButton("MediaPipe",callback_data=f'MediaPipe_{message.id}')]]
+   await message.reply(text = Text ,reply_markup = InlineKeyboardMarkup(CHOOSE_UR_BUTTONS))
   #  await Reply.edit_text('تمت ')
   #  await Check_Dir(Dl_Dir)
 
@@ -503,27 +396,46 @@ async def _telegram_file(client, message):
 async def callback_query(CLIENT,CallbackQuery):
   User_Id = CallbackQuery.from_user.id
   Callback_List = CallbackQuery.data.split('_')
-  Method = Callback_List[0]
+  Detect_Model = Callback_List[0]
   Msg_Id = Callback_List[-1]
-  if Method in ['blurfemale','blurnonmale']:
+  
+  if len(Callback_List) == 2 :
+    Text = 'اختر نموذج تمييز الجنس'
     CHOOSE_UR_BUTTONS = [
-      [InlineKeyboardButton("Per Second",callback_data='persecond' + '_'+ Method + '_' + Msg_Id)],
-      [InlineKeyboardButton("Per Half Second",callback_data='perhalfsecond' + '_' + Method + '_' + Msg_Id)],
-      [InlineKeyboardButton("Per Quarter Second",callback_data='perqsecond' + '_'+ Method + '_' + Msg_Id)],
-      [InlineKeyboardButton("Per Frame",callback_data='perframe'+'_'+ Msg_Id)]
-        ]
-    await CallbackQuery.edit_message_text(text = 'اختر',reply_markup = InlineKeyboardMarkup(CHOOSE_UR_BUTTONS))
+      [InlineKeyboardButton("DeepFace",callback_data=f'{Detect_Model}_DeepFace_{Msg_Id}')],
+      [InlineKeyboardButton("Clip",callback_data=f'{Detect_Model}_Clip_{Msg_Id}')]
+         ]
+    await CallbackQuery.edit_message_text(text = Text,reply_markup = InlineKeyboardMarkup(CHOOSE_UR_BUTTONS))   
 
-     
-  elif Method in ['persecond','perhalfsecond','perqsecond','perframe'] :
-    Method2 = Callback_List[1]
+  elif len(Callback_List) == 3 : 
+    Gender_Model = Callback_List[1]
+    Text = 'اختر طريقة البلور'
+    CHOOSE_UR_BUTTONS = [
+      [InlineKeyboardButton("Blur Female",callback_data=f'{Detect_Model}_{Gender_Model}_blurfemale_{Msg_Id}')],
+      [InlineKeyboardButton("Blur Non-Male",callback_data=f'{Detect_Model}_{Gender_Model}_blurnonmale_{Msg_Id}')]
+         ]
+    await CallbackQuery.edit_message_text(text = Text,reply_markup = InlineKeyboardMarkup(CHOOSE_UR_BUTTONS))   
+
+  elif len(Callback_List) == 4 : 
+    Gender_Model = Callback_List[1]
+    Method = Callback_List[2]
+    Text = 'اختر مدة التعرف '
+    CHOOSE_UR_BUTTONS = [
+      [InlineKeyboardButton("Per Second",callback_data=f'{Detect_Model}_{Gender_Model}_{Method}_persecond_{Msg_Id}')],
+      [InlineKeyboardButton("Per Half Second",callback_data=f'{Detect_Model}_{Gender_Model}_{Method}_perhalfsecond_{Msg_Id}')],
+      [InlineKeyboardButton("Per Quarter Second",callback_data=f'{Detect_Model}_{Gender_Model}_{Method}_perqsecond_{Msg_Id}')],
+      [InlineKeyboardButton("Per Frame",callback_data=f'{Detect_Model}_{Gender_Model}_{Method}_perframe_{Msg_Id}')]
+         ]
+    await CallbackQuery.edit_message_text(text = Text,reply_markup = InlineKeyboardMarkup(CHOOSE_UR_BUTTONS))   
+  
+  elif len(Callback_List) == 5 : 
+    Gender_Model = Callback_List[1]
+    Method = Callback_List[2]
+    Detect_Interval = Callback_List[2]
     file_msg = await Get_Msg(bot,User_Id,Msg_Id)
     replied = await CallbackQuery.edit_message_text('جار العمل ...')
     Vid_Path = await file_msg.download(file_name=Dl_Dir)
-    if Method2 == 'blurfemale' :
-      Blurred_Vid = await Blur_Female(Vid_Path,Method,replied)
-    elif Method2 == 'blurnonmale':
-       Blurred_Vid = await Blur_nonmale(Vid_Path,Method,replied)
+    Blurred_Vid = await Blur_Female(Vid_Path,replied,Detect_Model,Gender_Model,Detect_Interval,Method)
     await replied.edit_text('تمت')
     await file_msg.reply_video(Blurred_Vid)
     await Check_Dir(Dl_Dir)
