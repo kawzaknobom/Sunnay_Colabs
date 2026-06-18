@@ -499,7 +499,6 @@ async def refunc(client,message):
       reply_msg = await Get_Msg(bot,User_Id,reply_id)
       file_id = reply_msg.reply_to_message_id
       file_msg = await Get_Msg(bot,User_Id,file_id)
-      print(file_msg)
       await message.delete()
       await reply_msg.delete()
       Ranges = Msg_Text.replace(' ','|')
