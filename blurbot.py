@@ -376,9 +376,8 @@ async def callback_query(CLIENT,CallbackQuery):
         await replied.edit_text('تمت')
         await file_msg.reply_video(Blurred_Vid)
         await Check_Dir(Dl_Dir)
-        callback_dict.pop(User_Id)
       else : 
-       callback_dict.pop(User_Id)
+       
        Text = '''الآن أرسل المدى بهذه الصورة
          hh:mm:ss-hh:mm:ss
          ويمكنك إرسال أكثر من مدى بهذه الصورة بترك مسافة بين كل مدى
@@ -386,7 +385,8 @@ async def callback_query(CLIENT,CallbackQuery):
          '''
        await CallbackQuery.message.delete()
        await file_msg.reply_text(Text,reply_markup=ForceReply(True),reply_to_message_id=file_msg.id)
-    
+      callback_dict.pop(User_Id)
+
   elif any(word in CallbackQuery.data for word in ['Yolo','MediaPipe']):
       Detect_Model = Callback_List[0]
       callback_dict[User_Id].append(Detect_Model)
@@ -467,7 +467,7 @@ async def callback_query(CLIENT,CallbackQuery):
       await replied.edit_text('تمت')
       await file_msg.reply_video(Blurred_Vid)
       await Check_Dir(Dl_Dir)
-      callback_dict.pop(User_Id)
+    callback_dict.pop(User_Id)
 
 
 @bot.on_message(filters.private & filters.reply)
@@ -492,14 +492,14 @@ async def refunc(client,message):
       await replied.edit_text('تمت')
       await file_msg.reply_video(Blurred_Vid)
       await Check_Dir(Dl_Dir)
-      callback_dict.pop(User_Id)
+      Rangers.pop(User_Id)
     else : 
-      User_Id = message.from_user.id
       Msg_Text = message.text
       reply_id = message.reply_to_message_id
       reply_msg = await Get_Msg(bot,User_Id,reply_id)
       file_id = reply_msg.reply_to_message_id
       file_msg = await Get_Msg(bot,User_Id,file_id)
+      print(file_msg)
       await message.delete()
       await reply_msg.delete()
       Ranges = Msg_Text.replace(' ','|')
@@ -509,7 +509,6 @@ async def refunc(client,message):
       await replied.edit_text('تمت')
       await file_msg.reply_video(Blurred_Vid)
       await Check_Dir(Dl_Dir)
-      callback_dict.pop(User_Id)
 
      
 
