@@ -378,6 +378,7 @@ async def callback_query(CLIENT,CallbackQuery):
         await Check_Dir(Dl_Dir)
         callback_dict.pop(User_Id)
       else : 
+       callback_dict.pop(User_Id)
        Text = '''الآن أرسل المدى بهذه الصورة
          hh:mm:ss-hh:mm:ss
          ويمكنك إرسال أكثر من مدى بهذه الصورة بترك مسافة بين كل مدى
