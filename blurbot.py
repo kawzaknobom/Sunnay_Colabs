@@ -118,7 +118,7 @@ async def Raw_Blur(file_path,replied,Detect_Range):
       splitted = Range.split('-') 
       start = await get_seconds(splitted[0])
       end  = await get_seconds(splitted[1])
-      ranges.append([int(start*fps),int(end*fps)])
+      ranges.append([int(start*fps),int((end+1)*fps)])
 
 
   while(True):
@@ -186,7 +186,7 @@ async def Blur_Female(file_path,replied,Detect_Model,BlurObject,Gender_Model,Det
       splitted = Range.split('-') 
       start = await get_seconds(splitted[0])
       end  = await get_seconds(splitted[1])
-      ranges.append([int(start*fps),int(end*fps)])
+      ranges.append([int(start*fps),int((end+1)*fps)])
 
 
   while(True):
