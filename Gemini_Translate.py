@@ -24,7 +24,7 @@ from pyrogram.enums import MessageEntityType
 from google import genai
 from google.genai import types
 from textwrap import wrap
-import os,asyncio,shutil,re
+import os,asyncio,shutil,re,time
 
 def Pyrogram_Client(Bot_Token):
   Bot_Identifier = Bot_Token.split(':')[0]
@@ -158,6 +158,10 @@ async def Gemini_BTxt(TxtFile,Req_Count,lang_sy='ar',Api_Index=0) :
     Req_Count += 1
     return Res,Req_Count
   except Exception as err : 
+    if 'retry' in str(err):
+       splitted = str(err).split('retry')[1][3:]
+       seconds = int(splitted.split('.')[0])
+       time.sleep(seconds)
     Req_Count+=1
     New_Index = Api_Index+1 
     if New_Index < len(Gemini_Apis):
