@@ -32,7 +32,7 @@ if not os.path.isdir(ServAcc_Dir):
    os.mkdir(ServAcc_Dir)
 
 if len(os.listdir(ServAcc_Dir)) != 0 :
-   ServAcc_File = os.listdir(ServAcc_Dir)[0]
+   ServAcc_File = ServAcc_Dir + os.listdir(ServAcc_Dir)[0]
 else :
     ServAcc_File = ''
 
