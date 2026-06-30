@@ -1,6 +1,6 @@
 import nest_asyncio,os
 nest_asyncio.apply()
-
+os.environ["TF_USE_LEGACY_KERAS"] = "1"
 #########################################################
 
 Bot_Token = os.getenv('TOKEN')
