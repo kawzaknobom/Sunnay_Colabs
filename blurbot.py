@@ -323,7 +323,7 @@ async def blurring(file_path,method,BlurRate,bodies_dict,Ranges):
      if not isblurred : 
       frames = list(bodies_dict.keys())
       for ind in range(0,len(frames))  :
-        if method in ['Per Second','Per Half Second','Per Quarter Second'] :
+        if method in ['Per Second','Per Half Second','Per Quarter Second','Per Frame'] :
           x = frames[ind] - int(fps)
           y = frames[ind] + int(fps)
 
@@ -336,15 +336,15 @@ async def blurring(file_path,method,BlurRate,bodies_dict,Ranges):
             
               break
 
-        elif method == 'Per Frame':
-            if ret_num == frames[ind] :
+        # elif method == 'Per Frame':
+        #     if ret_num == frames[ind] :
               
-                women_bodies = bodies_dict[frames[ind]]
-                for body in women_bodies :
-                  x1, y1, x2, y2 = body
-                  frame[y1:y2,x1:x2] = cv2.blur(frame[y1:y2, x1:x2], (BlurRate, BlurRate)) 
+        #         women_bodies = bodies_dict[frames[ind]]
+        #         for body in women_bodies :
+        #           x1, y1, x2, y2 = body
+        #           frame[y1:y2,x1:x2] = cv2.blur(frame[y1:y2, x1:x2], (BlurRate, BlurRate)) 
             
-                break
+        #         break
       
      out.write(frame)
     else:
