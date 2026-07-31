@@ -1,0 +1,4 @@
+pyrogram
+tgcrypto
+opencv-python
+nest_asyncio

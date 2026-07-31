@@ -1,0 +1,7 @@
+demucs
+pyrogram
+tgcrypto
+pillow
+audioread
+nest_asyncio
+opencv-python
