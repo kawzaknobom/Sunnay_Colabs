@@ -89,7 +89,8 @@ def Mp3_Conv(File):
 
 
 def Vid_Mon(img_path,aud_path):
-      vid_path = img_path.replace('.mp4','_Montaj.mp4')
+      Img_ex = '.' + img_path.split('.')[-1]
+      vid_path = img_path.replace(Img_ex,'_Montaj.mp4')
       Montaj_Cmd = f'ffmpeg -r 1 -loop 1 -y -i "{img_path}" -i "{aud_path}" -c:v libx264 -tune stillimage -c:a copy -shortest -vf scale=1920:1080 "{vid_path}"'
       os.system(Montaj_Cmd)
       return vid_path
@@ -134,7 +135,7 @@ def _telegram_file(client, message):
                 image = File_Dl(image_msg,dl_path)
                 audio = File_Dl(audio_msg,dl_path)
                 Mp3_Path = Mp3_Conv(audio)
-                Res_File,Thumbnail = Vid_Mon(image,Mp3_Path)
+                Res_File = Vid_Mon(image,Mp3_Path)
                 Upld_File(Res_File,image_msg)
                 Check_Dir(dl_path)
             replied.edit_text('تم')
