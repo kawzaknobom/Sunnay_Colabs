@@ -70,7 +70,7 @@ async def Create_Dir(Dir):
 async def Check_Dir(Dir):
   if os.path.isdir(Dir):
       shutil.rmtree(Dir)
-  Create_Dir(Dir)
+  await Create_Dir(Dir)
 ####
 
 @bot.on_message(filters.command('apiswitch') & filters.private)
