@@ -1,4 +1,4 @@
-from cookies_nodb import Audio_Forms,Video_Forms,Image_forms,count,Serv_Acc,T_linebreak,Api_Id,Api_Hash,Coloration_File,g_langs,Small_line_break,bucketname,seg_per_sec,Gemini_Tokens
+from cookies_nodb import Audio_Forms,Video_Forms,Image_forms,count,T_linebreak,Api_Id,Api_Hash,Coloration_File,g_langs,Small_line_break,bucketname,seg_per_sec,Gemini_Tokens
 
 import audioread,cv2,os,docx,arabic_reshaper,shutil,time,pytesseract,webvtt,datetime,subprocess,re,img2pdf,asyncio,requests,json,urllib.parse,random
 from typing import Union
@@ -365,12 +365,14 @@ def Get_File(Dl_Dir,File_Ex):
       return os.path.abspath(Dl_Dir + file)
   return None
       
-      
+
 def Ocr_Func(Ocr_Path):
-  
+  Serv_Acc = os.environ['Service_Acc']
+  ServAcc_File = 'servac.json'
+  open(ServAcc_File,'w').write(Serv_Acc)
   Dir_Path = ('.' if Ocr_Path.startswith('.') else '') + '/'.join(Ocr_Path.split('/')[:-1]) + '/'
   Tahweel_Cmd = f'''tahweel "{Ocr_Path}" \
-    --service-account-credentials "{Serv_Acc}" \
+    --service-account-credentials "{ServAcc_File}" \
     --pdf2image-thread-count 8 \
     --processor-max-workers 8 \
     --txt-page-separator 🟥 '''
