@@ -27,9 +27,10 @@ Renm_L = []
 
 #######
 
-Bot_Token = '8016797331:AAEFGbZ9wWG5mI4Gomcxrskiis-yAzJEgog'
-Api_Id = ''
-Api_Hash = ''
+Bot_Token = os.getenv('TOKEN')
+
+Api_Id = 15952578
+Api_Hash = '3600ce5f8f9b9e18cba0f318fa0e3600'
 
 def Pyrogram_Client(Bot_Token):
   Bot_Identifier = Bot_Token.split(':')[0]

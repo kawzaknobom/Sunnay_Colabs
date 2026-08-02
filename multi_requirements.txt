@@ -33,5 +33,6 @@ pymongo
 pyrogram
 tgcrypto
 requests
-
+googletrans
+tahweel
 
