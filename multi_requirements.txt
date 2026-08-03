@@ -35,4 +35,3 @@ tgcrypto
 requests
 googletrans
 tahweel
-

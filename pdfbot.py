@@ -5,7 +5,7 @@ from pyrogram.enums import MessageEntityType
 
 
 from functools import reduce
-import os,re,random, threading,time,subprocess,asyncio,shutil,img2pdf
+import os,re,random, threading,time,subprocess,asyncio,shutil,img2pdf,json
 
 
 from pypdf import PdfReader
@@ -13,7 +13,6 @@ from pypdf import PdfReader
 from PIL import Image 
 from pypdf import PdfWriter, PdfReader
 import pypdfium2 as pdfium
-from pdf2image import convert_from_path
 from textwrap import wrap
 from pdfCropMargins import crop
 from math import ceil
@@ -50,16 +49,19 @@ main_dl_path = f'./downloads_{Bot_Identifier}/'
 
 #### Bot Funcs ####
 
-T_linebreak = '\n\n ◾ــــــــــــــ◾ \n\n'
-
-Translate_Opts = [['ترجمة','Trans']]
 Other_Opts = [['Zip','Zip']]
-Photo_Options = [['دمج','IMerge'],['تلوين','Color'],['بلور','Blur'],['Ocr','Ocr']]  + Other_Opts + Translate_Opts
+Other_Options = [['تسمية','Renm'],['تفاصيل','Det']] + Other_Opts
+T_linebreak = '\n\n ◾ــــــــــــــ◾ \n\n'
+Ex_Opt = [['استخراج','Ex']]
+Translate_Opts = [['ترجمة','Trans']]
+Cbx_Option =  Ex_Opt + Other_Options + Translate_Opts
+Other_Opts = [['Zip','Zip']]
+Photo_Options = [['دمج','IMerge'],['Ocr','Ocr']]  + Other_Opts + Translate_Opts
 Photo_Multi_Options = ['IMerge','PMake']
-
-Image_forms = (".jpg",".png",'.tif','webp')
+LANGS_Modules = [['Google Translate','GTrans']]
+Image_forms = (".jpg",".jpeg",".png",'.tif','webp')
 g_langs = [ 'العربية | ar','الإنجليزية | en','الفرنسية | fr','الألمانية | de','العبرية iw  |  iw','العبرية he | he','اليونانية | el','الأمهرية | am','الباسك | eu','البنغالية | bn','البرتغالية  | pt','البلغارية | bg','الكتالانية | ca','الشيروكية | chr','الكرواتية | hr','التشيكية | cs','الدنماركية | da','الهولندية | nl','الإستونية | et','الفلبينية | fil','الفنلندية | fi','الغوجاراتية | gu','الهندية |  hi','المجرية | hu','الأيسلندية | is ','الإندونيسية | id','الإيطالية | it','اليابانية | ja','الكانادا  | kn','الكورية | ko','اللاتفية | lv','الليتوانية | lt','الماليزية |  ms','المالايالامية | ml','الماراثية |  mr','النرويجية | no','البولندية | pl','الرومانية | ro','الروسية | ru','الصربية | sr','الصينية  | zh-cn','الصينية TW | zh-tw','السلوفاكية | sk','السلوفينية | sl','الإسبانية | es','السواحيلية | sw','السويدية | sv','التاميلية | ta','التيلوغوية | te','التايلاندية | th','التركية|  tr','الأوردية | ur','الأوكرانية | uk','الفيتنامية | vi' ,'الويلزية | cy','الأفريكانية | af', 'الأرمينية | hy','الألبانية | sq','الأذريبيجانية | az','البيلاروسية | be','البوسنية | bs','السبيونوية | ceb','الشيشوانية | ny','الكورسيكية | co', 'الهولندية | nl','الاسبرانتو | eo','الاستوانية | et','الفلبينية | tl','الزولو | zu ','يوروبا | yo','اليديشية | yi','xhosa | xh','الأوزبكية | uz ','أويغور | ug','طاجيكية | tg','السودانية | su','الصومالية | so','السنهالية | si','السندية | sd','شونا | sn','سيسوتو | st','الغيلية | gd','ساموا | sm','رومانية | ro','بنجابية | pa' ,'فارسية | fa','باشتو | ps','أوديا | or','نرويجية | no' ,'نيبالية | ne','ميانمارية | my','منغولية | mn','ماورية | mi','مالطية | mt','قيرغيزستانية | ky','كردية | ku','الخميرية | km','الكازخستانية | kk','الجاوية | jw','الأيرلندية | ga','الإندونيسية | id', 'الإيغبو | ig', 'المجرية | hu', 'همونغ | hmn','هاواي | haw','هاوسا | ha','الكريولية | ht' ,'الجورجية | ka','الجاليكية | gl','الفريزية | fy','لاوية | lo', 'لاتينية | la', 'ليتوانية | lt', 'لوكسمبورغية | lb','المقدونية | mk', 'الملغاشية | mg']
-Ex_Pdf_Limit = str(500)
+Ex_Pdf_Limit = 500
 
 Main_Contract = """
 السلام عليكم ورحمة الله وبركاته 
@@ -78,13 +80,12 @@ Main_Contract = """
 هل توافق على بنود الاستخدام ؟ 
 """
 Usage_Button = [["نعم ","Yes"],["لا","No"] ]
-Other_Opts = [['رفع لأرشيف','ToArch'],['Zip','Zip']]
-Other_Options = [['تسمية','Renm'],['تفاصيل','Det']] + Other_Opts
+
 Renm_msg = "الآن أدخل الاسم الجديد "
 Compress_Op = [['ضغط','Compress']]
 Trim_Op = [['قص','Trim']]
 To_Pdf_Opt = [['Conv to Pdf ','2Pdf']]
-Pdf_Options = [['دمج','PMerge'],['Ocr','Ocr'],['فك قفل طباعة','Unlock'],['بلا حواشي','Marg']]  + Trim_Op
+Pdf_Options = [['دمج','PMerge'],['Ocr','Ocr'],['فك قفل طباعة','Unlock'],['بلا حواشي','Marg']]  + Trim_Op + Cbx_Option
 Ppf_Opts = Pdf_Options + To_Pdf_Opt
 Pdf_Txt_Option = Other_Options + Trim_Op + Translate_Opts + [['دمج','TMerge']]
 Pdf_Image_Option = [['صنع بدف','PMake']]
@@ -392,7 +393,7 @@ def File_Dl(File_Msg,dl_path):
   return File 
 
 def Zip_Func(dir):
-  Zip_File = os.listdir(dir)[0].split('.')[0]
+  Zip_File = os.listdir(dir)[0].split('.')[-2]
   shutil.make_archive(base_name=Zip_File,format='zip',root_dir=dir)
   return Zip_File + '.zip'
 
@@ -411,12 +412,11 @@ def Txt_Trim(Txt_File,Start_Word,End_Word):
     return Res_File
 
 def Pdf_Compress(bot,dl_path,File):
-  pdf_file = ('.' if File.startswith('.') else '') + File.split('.')[1 if File[0] == '.' else 0] + '_Compressed.pdf'
-  Multi_Temp_Chnl = -1003456116922
+  pdf_file = File.replace('.pdf','_Compressed.pdf')
   Extract_Dir = Pdf_Extract(File)
-  Repl_Msg = bot.send_message(Multi_Temp_Chnl,'.')
-  Msgs_List = Upld_Dir_Func(Extract_Dir,Repl_Msg)
-  Process_List = Multi_Op_Dl(bot,dl_path,Msgs_List,Multi_Temp_Chnl,True)
+  Process_List = os.listdir(Extract_Dir)
+  for index , img in enumerate(Extract_Dir) : 
+    Process_List[index] = Extract_Dir + img
   Pdf_File = Pdf_Make(Process_List)
   os.rename(Pdf_File,pdf_file)
   return pdf_file
@@ -432,11 +432,7 @@ def Pdf_Page_Num(File):
   return Num 
   
 def Pdf_Make(Img_List):
- if Img_List[-1].startswith('.'):
-     Ind = 1 
- else :
-     Ind = 0
- Pdf_File = ('.' if Img_List[-1].startswith('.') else '') +Img_List[-1].split('.')[Ind] + '_Created.pdf'
+ Pdf_File = Img_List[-1].replace('.pdf','_Created.pdf')
  try : 
    open(Pdf_File,"wb").write(img2pdf.convert(Img_List))
  except : 
@@ -462,11 +458,7 @@ def Grap_PicDir(Dir,Img_list=[]):
   return Img_list
       
 def Pdf_Merge(Files_List):
- if Files_List[-1].startswith('.'):
-     Ind = 1 
- else :
-     Ind = 0
- Pdf_File = ('.' if Files_List[-1].startswith('.') else '') +Files_List[-1].split('.')[Ind] + '_Merged.pdf'
+ Pdf_File = Files_List[-1].replace('.pdf','_Merged.pdf')
  Merger = PdfWriter()
  for Elm in Files_List : 
   Merger.append(Elm)
@@ -476,11 +468,7 @@ def Pdf_Merge(Files_List):
 def Pdf_Trim(File,Start,End):
     Reader = PdfReader(File)
     Writer = PdfWriter()
-    if File.startswith('.'):
-     Ind = 1 
-    else :
-     Ind = 0
-    Res = ('.' if File.startswith('.') else '') +File.split('.')[Ind] + '_Trim.pdf'
+    Res = File.replace('.pdf','_Trim.pdf')
     Pages = (Start,End)
     Page_Range = range(Pages[0], Pages[1] + 1)
     for page_num, page in enumerate(Reader.pages, 1):
@@ -493,31 +481,22 @@ def Pdf_Page(File,Page):
   Reader = PdfReader(File)
   Writer = PdfWriter()
   Writer.add_page(Reader.pages[Page-1])
-  if File.startswith('.'):
-     Ind = 1 
-  else :
-     Ind = 0
-  Res = ('.' if File.startswith('.') else '') +File.split('.')[Ind] + '_Trim.pdf'
+  Res = File.replace('.pdf','_Trim.pdf')
   Writer.write(open(Res,'wb'))
   return Res
 
 def Pdf_Extract(File):
- if File.startswith('.'):
-     Ind = 1 
- else :
-     Ind = 0
- Nom = os.path.basename(File).split('.')[0]
- Extract_Dir = ('.' if File.startswith('.') else '') +File.split('.')[Ind] + '/Extract_Dir/'
+ Extract_Dir = File.replace('.pdf','') + '/Extract_Dir/'
  Check_Dir(Extract_Dir)
- Pdf_Pages = convert_from_path(File,output_folder=Extract_Dir,fmt='jpeg')
+ pdf = pdfium.PdfDocument(File)
+ for i, page in enumerate(pdf):
+        # scale=3 renders around ~216 DPI (good quality for OCR)
+        image = page.render(scale=3).to_pil()
+        image.save(os.path.join(Extract_Dir, f"page_{i+1:04d}.jpeg"))
  return Extract_Dir
 
 def Unlock_Pdf(File):
-  if File.startswith('.'):
-     Ind = 1 
-  else :
-     Ind = 0
-  Unlocked_File = ('.' if File.startswith('.') else '') +File.split('.')[Ind] + '_Unlocked.pdf'
+  Unlocked_File = File.replace('.pdf','_Unlocked.pdf')
   Extract_Dir = Pdf_Extract(File)
   Img_List = Dir_List(Extract_Dir)
   Pdf_File = Pdf_Make(Img_List)
@@ -532,19 +511,39 @@ def Get_File(Dl_Dir,File_Ex):
       return os.path.abspath(Dl_Dir + file)
   return None
 
-      
+
+def pdf_ocr_func(Ocr_Path):
+  Extract_Dir = Pdf_Extract(Ocr_Path)
+  Img_List = Dir_List(Extract_Dir)
+  Text_File = Ocr_Path.replace('.pdf','.txt')
+  with open(Text_File,'a') as f :
+    for img in Img_List : 
+      Txt,docx = Ocr_Func(img)
+      f.write(open(Txt,'r').read() + T_linebreak)
+  return Text_File
+
 def Ocr_Func(Ocr_Path):
-  Serv_Acc = os.environ['Service_Acc']
   ServAcc_File = 'servac.json'
-  open(ServAcc_File,'w').write(Serv_Acc)
+  if not os.path.isfile(ServAcc_File):
+    Serv_Acc = os.environ['Service_Acc']
+    clean_string = Serv_Acc.replace("\xa0", " ")
+    data = json.loads(clean_string)
+    formatted_json = json.dumps(data, indent=2)
+    open(ServAcc_File,'w').write(formatted_json)
   Dir_Path = ('.' if Ocr_Path.startswith('.') else '') + '/'.join(Ocr_Path.split('/')[:-1]) + '/'
-  Tahweel_Cmd = f'''tahweel "{Ocr_Path}" \
-    --service-account-credentials "{ServAcc_File}" \
-    --pdf2image-thread-count 8 \
-    --processor-max-workers 8 \
-    --txt-page-separator 🟥 '''
-  p = subprocess.Popen(Tahweel_Cmd,cwd=Dir_Path,shell=True)
+
+  abs_serv_acc = os.path.abspath(ServAcc_File)
+  os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = abs_serv_acc
+  Tahweel_Cmd = (
+          f'tahweel "{Ocr_Path}" '
+          f'--service-account-credentials "{abs_serv_acc}" '
+          f'--pdf2image-thread-count 8 '
+          f'--processor-max-workers 8 '
+          f'--txt-page-separator 🟥'
+      )
+  p = subprocess.Popen(Tahweel_Cmd,cwd=Dir_Path,shell=True,env=os.environ)
   p.wait()
+  
   Txt_File = Get_File(Dir_Path,'txt')
   Docx_File = Get_File(Dir_Path,'docx')
   return Txt_File,Docx_File
@@ -650,7 +649,6 @@ def reload_loop(process):
 
 def Multi_loop():
   Multi_Q = public_q
-  dl_path = f'./downloads_{Bot_Identifier}/'
   for obj in range (0,len(Multi_Q)) :
    timer = threading.Timer(1800, reload_loop, args=[public_q[0]])
    timer.start()
@@ -669,6 +667,7 @@ def Multi_loop():
     msg_list = C_Process.split('_')
     msg_id = msg_list[1]
     dl_path = f'./downloads_{msg_id}_{Bot_Identifier}/'
+    dl_path = os.path.abspath(dl_path) + '/'
     process = msg_list[0]
     rp_msg_id = int(msg_list[-2])
     user_id = int(msg_list[-1])
@@ -770,15 +769,20 @@ def Multi_loop():
               if File.endswith('PDF'):
                 os.rename(File,File.lower())
                 File = File.lower()
-              Txt_File,Docx_File = Ocr_Func(File)
+                
+              if File.lower().endswith('pdf'):
+                Txt_File = pdf_ocr_func(File)
+              elif File.lower().endswith(Image_forms):
+                Txt_File,Docx_File = Ocr_Func(File)
           
-
+            if process == 'Trans' :
+              Trans_Model = msg_list[3]
+              if Trans_Model == 'GTrans' : 
+                  Txt_File = Google_Trans_Txt(Txt_File,Rate)
             if File.lower().endswith(Image_forms):
               Send_Text_Res(File_Msg,open(Txt_File,'r').read())
             else :
               File_Msg.reply_document(Txt_File)
-              if process == 'Ocr' :
-                File_Msg.reply_document(Docx_File)
          
   
          elif process in ('Compress','Marg','Unlock','Renm') :
@@ -803,7 +807,7 @@ def Multi_loop():
               elif process == 'Compress' :
                 if File.lower().endswith('pdf'):
                   Res_File = Pdf_Compress(bot,dl_path,File)
-              
+              Upld_File(Res_File,File_Msg)
       try :
         reply_msg.edit_text('تمت  ☑️')
       except :
@@ -1058,6 +1062,30 @@ def callback_query(CLIENT,CallbackQuery):
     Merge_Quee[Key][0].append(Replied.id)
   
 
+  elif Method == 'Trans':
+      if len(Callback_List) == 4 :
+        Callback_Add(CallbackQuery)
+      
+      elif len(Callback_List) == 3 :
+        CHOOSE_UR_Mod = "اختر النموذج "
+        LANGS_BUTTONS = []
+        for Mod in LANGS_Modules : 
+          Data = f"{CallbackQuery.data}_{Mod[1]}"
+          LANGS_BUTTONS.append([InlineKeyboardButton(Mod[0],callback_data=Data)])
+        CallbackQuery.edit_message_text(text = CHOOSE_UR_Mod,reply_markup = InlineKeyboardMarkup(LANGS_BUTTONS))
+      else :
+        CHOOSE_UR_LANG = "اختر اللغة المراد الترجمة إليها"
+        LANGS_BUTTONS = []
+        for lang in g_langs : 
+          
+          Rom_Num = int(len(g_langs)/3)
+          Data = f"{CallbackQuery.data}_{lang.split('|')[-1].strip()}"
+          if g_langs.index(lang) > Rom_Num-1 :
+           LANGS_BUTTONS[g_langs.index(lang)%Rom_Num].append(InlineKeyboardButton(lang.split('|')[0],callback_data=Data))
+          else : 
+           LANGS_BUTTONS.append([InlineKeyboardButton(lang.split('|')[0],callback_data=Data)])
+        CallbackQuery.edit_message_text(text = CHOOSE_UR_LANG,reply_markup = InlineKeyboardMarkup(LANGS_BUTTONS))
+        
   elif Method in ['Compress'] :           
         if file_msg.document.file_name.lower().endswith('pdf'):
           replied = CallbackQuery.edit_message_text(f"تمت الإضافة للصف  \n\n ترتيبك هو {len(Quee)+1} ☕ ")

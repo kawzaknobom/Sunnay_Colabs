@@ -5,6 +5,7 @@ nest_asyncio.apply()
 
 Bot_Token = os.getenv('TOKEN')
 
+
 ########################################################
 
 from pyrogram import Client, filters,enums,StopTransmission,idle
@@ -13,6 +14,7 @@ from pyrogram.errors import FloodWait
 from pyrogram.enums import MessageEntityType
 from pyrogram.types import Message
 import shutil,os,time,random
+import internetarchive as ia
 
 Archive_Dict = {}
 
@@ -61,7 +63,7 @@ def File_Dl(File_Msg,dl_path):
     else :
       Splitted = file_name.split('.')
       Name = Splitted[0]
-      Ex =  Splitted[1]
+      Ex =  Splitted[-1]
     custom_name = os.path.join(dl_path,f"{Name}_{random.randint(1,1000)}.{Ex}")
     File = File_Msg.download(file_name=custom_name)
   else :
@@ -70,8 +72,12 @@ def File_Dl(File_Msg,dl_path):
 
 
 def upld2arch(upldarchpath,bucketname):
-  Arch_Cmd = f'''rclone copy "{upldarchpath}" 'myarchive':"{bucketname}"'''
-  os.system(Arch_Cmd)
+  ia.upload(
+    itemname=bucketname,
+    files=upldarchpath,
+    verbose=True,
+    retries=3
+)
   file_name = os.path.basename(upldarchpath)
   Arch_Url = f"https://archive.org/download/{bucketname}/{file_name}"
   return Arch_Url
