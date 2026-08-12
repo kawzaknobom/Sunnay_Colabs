@@ -23,9 +23,6 @@ Api_Id = 15952578
 Api_Hash = '3600ce5f8f9b9e18cba0f318fa0e3600'
 bot,Bot_Identifier = Pyrogram_Client(Bot_Token)
 
-
-Ocr_dl_path = f'./downloads_{Bot_Identifier}/'
-
 ServAcc_Dir = f'/content/Sunnay_Colabs/ServAcc_{Bot_Identifier}/'
 
 if not os.path.isdir(ServAcc_Dir):
@@ -81,6 +78,7 @@ async def _telegram_file(client, message):
         if len(globals()['ServAcc_File']) == 0 : 
             await message.reply('قم بإرسال ملف Service Account')
         else : 
+           Ocr_dl_path = f'./downloads_{message.id}_{Bot_Identifier}/'
            replied = await message.reply('جار العمل')
            Ocr_File = await message.download(file_name=Ocr_dl_path)
            Txt_File,Docx_File = Ocr_Func(Ocr_File,globals()['ServAcc_File'])
@@ -93,6 +91,7 @@ async def _telegram_file(client, message):
         await message.reply('قم بإرسال ملف Service Account')
      else :
            replied = await message.reply('جار العمل')
+           Ocr_dl_path = f'./downloads_{message.id}_{Bot_Identifier}/'
            Ocr_File = await message.download(file_name=Ocr_dl_path)
            Txt_File,Docx_File = Ocr_Func(Ocr_File,globals()['ServAcc_File'])
            await message.reply(open(Txt_File,'r').read())

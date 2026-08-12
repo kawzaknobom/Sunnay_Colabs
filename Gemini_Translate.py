@@ -55,7 +55,7 @@ Api_Hash = '3600ce5f8f9b9e18cba0f318fa0e3600'
 bot,Bot_Identifier = Pyrogram_Client(Bot_Token)
 
 Gemini_Token_Pattern = "^AIzaSy.*"
-T_linebreak = '\n\n ◾ــــــــــــــ◾ \n\n'
+Tr_linebreak = '\n\n 🟥ــــــــــــــ🟥 \n\n'
 
 g_langs = [ 'العربية | ar','الإنجليزية | en','الفرنسية | fr','الألمانية | de','العبرية iw  |  iw','العبرية he | he','اليونانية | el','الأمهرية | am','الباسك | eu','البنغالية | bn','البرتغالية  | pt','البلغارية | bg','الكتالانية | ca','الشيروكية | chr','الكرواتية | hr','التشيكية | cs','الدنماركية | da','الهولندية | nl','الإستونية | et','الفلبينية | fil','الفنلندية | fi','الغوجاراتية | gu','الهندية |  hi','المجرية | hu','الأيسلندية | is ','الإندونيسية | id','الإيطالية | it','اليابانية | ja','الكانادا  | kn','الكورية | ko','اللاتفية | lv','الليتوانية | lt','الماليزية |  ms','المالايالامية | ml','الماراثية |  mr','النرويجية | no','البولندية | pl','الرومانية | ro','الروسية | ru','الصربية | sr','الصينية  | zh-cn','الصينية TW | zh-tw','السلوفاكية | sk','السلوفينية | sl','الإسبانية | es','السواحيلية | sw','السويدية | sv','التاميلية | ta','التيلوغوية | te','التايلاندية | th','التركية|  tr','الأوردية | ur','الأوكرانية | uk','الفيتنامية | vi' ,'الويلزية | cy','الأفريكانية | af', 'الأرمينية | hy','الألبانية | sq','الأذريبيجانية | az','البيلاروسية | be','البوسنية | bs','السبيونوية | ceb','الشيشوانية | ny','الكورسيكية | co', 'الهولندية | nl','الاسبرانتو | eo','الاستوانية | et','الفلبينية | tl','الزولو | zu ','يوروبا | yo','اليديشية | yi','xhosa | xh','الأوزبكية | uz ','أويغور | ug','طاجيكية | tg','السودانية | su','الصومالية | so','السنهالية | si','السندية | sd','شونا | sn','سيسوتو | st','الغيلية | gd','ساموا | sm','رومانية | ro','بنجابية | pa' ,'فارسية | fa','باشتو | ps','أوديا | or','نرويجية | no' ,'نيبالية | ne','ميانمارية | my','منغولية | mn','ماورية | mi','مالطية | mt','قيرغيزستانية | ky','كردية | ku','الخميرية | km','الكازخستانية | kk','الجاوية | jw','الأيرلندية | ga','الإندونيسية | id', 'الإيغبو | ig', 'المجرية | hu', 'همونغ | hmn','هاواي | haw','هاوسا | ha','الكريولية | ht' ,'الجورجية | ka','الجاليكية | gl','الفريزية | fy','لاوية | lo', 'لاتينية | la', 'ليتوانية | lt', 'لوكسمبورغية | lb','المقدونية | mk', 'الملغاشية | mg']
 
@@ -79,6 +79,25 @@ Gemini_Model = 'gemini-2.5-flash-lite'
 #Gemini_Model = 'gemini-2.5-pro'
 
 
+  
+async def Send_Text_Res(Media_Msg,Text): 
+  if len(Text) <= 4096 :
+    if len(Text.strip()) != 0 :
+        await Media_Msg.reply(Text)
+  else :
+      textlist = wrap(Text.replace('\n','$'),4096)
+      for part in textlist:
+        if '$' in part : 
+          part = part.replace('$','\n')
+        await Flood_Wait_fix(Media_Msg,part)
+  
+async def Flood_Wait_fix(Media_Msg,part):
+  try : 
+   await Media_Msg.reply(part)
+  except FloodWait as err : 
+   time.sleep(err.x)
+   return await Flood_Wait_fix(Media_Msg,part)
+  
 async def Check_File(File):
   if os.path.isfile(File):
       os.remove(File)
@@ -129,7 +148,7 @@ async def Gemini_Trans(Text,lang_sy='ar',Req_Count=0,Api_Index=0):
     response = client.models.generate_content(model=Gemini_Model, contents=Translate_Prompt)
     Req_Count += 1
     Res = await Rmv_Trans(response.text)
-    Res = Res + T_linebreak + Text + T_linebreak
+    Res = Res + Tr_linebreak + Text + Tr_linebreak
     return Res,Req_Count
   except Exception as err : 
     if 'retry' in str(err):
@@ -141,51 +160,60 @@ async def Gemini_Trans(Text,lang_sy='ar',Req_Count=0,Api_Index=0):
     if New_Index < len(Gemini_Apis):
       if Req_Count%15 == 0 :
           await asyncio.sleep(60)
-          return await Gemini_Trans(Text,lang_sy,Req_Count,New_Index)
+      return await Gemini_Trans(Text,lang_sy,Req_Count,New_Index)
     else :
-      raise ValueError('انتهت توكنات اليوم 🌿')
+      return 'ERROR',Req_Count
     
-async def Gemini_Trans_Txt(TxtFile,lang_sy='ar'):
-  mainDir = '/'.join(TxtFile.split('/')[:-1]) + '/'
-  Res_Name = mainDir +  TxtFile.split('/')[-1].split('.')[0]
-  Txt_File = Res_Name + '_Translated.txt'
+async def Gemini_Trans_Txt(Msg,TxtFile,lang_sy='ar'):
+  Txt_File = TxtFile.replace('.txt','_Translated.txt')
   await Check_File(Txt_File)
   Text = open(TxtFile,'r').read()
-  await Gemini_CTxt(TxtFile,Txt_File,Text,lang_sy,0,8000)
-  return Txt_File
+  await Gemini_CTxt(Msg,TxtFile,Txt_File,Text,lang_sy,0,10000)
   
-async def Gemini_CTxt(TxtFile,Txt_File,Text,lang_sy,Req_Count=0,Limit=20000):
+async def Gemini_CTxt(Msg,TxtFile,Txt_File,Text,lang_sy,Req_Count=0,Limit=20000):
+  rest = ''
   with open(Txt_File,'a') as f : 
     if len(Text) > Limit : 
       Textlist = await Wrap_Text(Text,Limit)
       for Num,part in enumerate(Textlist) : 
-        mainDir = '/'.join(TxtFile.split('/')[:-1]) + '/'
-        Res_Name = mainDir +  TxtFile.split('/')[-1].split('.')[0]
-        Txt_Part = Res_Name + f'_P0000{Num}.txt'
+        if len(rest.strip()) != 0 :
+          part = rest + part
+        if '.' in part :
+          rest = part.split('.')[-1].strip()
+          part = part[:-len(rest)-1]
+        elif '\n' in part :
+          rest = part.split('\n')[-1].strip()
+          part = part[:-len(rest)-1]
+        Txt_Part = TxtFile.replace(' ','_').replace('.txt',f'_P0000{Num}.txt')
         open(Txt_Part,'a').write(part)
-        Res_Text,Req_Count = await Gemini_Trans(part,lang_sy,Req_Count)
+        Res_Text,Req_Count = await Gemini_BTxt(Txt_Part,Req_Count,lang_sy)
+        if Res_Text == 'ERROR' :
+          Res_Text,Req_Count = await Gemini_Trans(part,lang_sy,Req_Count)
         if Res_Text == 'ERROR' :
           New_Limit = Limit-1000
           if New_Limit > 0 :
-            return await Gemini_CTxt(TxtFile,Txt_File,Text,lang_sy,Req_Count,New_Limit)
+            return await Gemini_CTxt(Msg,TxtFile,Txt_File,Text,lang_sy,Req_Count,New_Limit)
           else : 
-           mainDir = '/'.join(TxtFile.split('/')[:-1]) + '/'
-           Res_Name = mainDir +  TxtFile.split('/')[-1].split('.')[0]
-           Rest_File = Res_Name + f'_Res.txt'
+           Rest_File = TxtFile.replace('.txt','_Res.txt')
            with open(Rest_File,'a') as Rf : 
              for sec in Textlist[Num:]:
                Rf.write(sec)
-           raise ValueError('انتهت توكنات اليوم 🌿')
+           await Msg.reply_document(Txt_File)
+           await Msg.reply_document(Rest_File)
+           await Msg.reply('انتهت توكنات اليوم 🌿')
+           break
         f.write(Res_Text)
-        os.remove(Txt_Part)
+      await Msg.reply_document(Txt_File)
     else : 
-      Res_Text,Req_Count = await Gemini_Trans(Text,lang_sy,Req_Count)
+      Res_Text,Req_Count = await Gemini_BTxt(TxtFile,Req_Count,lang_sy)
+      if Res_Text == 'ERROR' :
+        Res_Text,Req_Count = await Gemini_Trans(Text,lang_sy,Req_Count)
       if Res_Text == 'ERROR' :
           New_Limit = Limit-1000
           if New_Limit != 0 :
-            return await Gemini_CTxt(TxtFile,Txt_File,Text,lang_sy,Req_Count,New_Limit)
+            return await Gemini_CTxt(Msg,TxtFile,Txt_File,Text,lang_sy,Req_Count,New_Limit)
           else : 
-           raise ValueError('انتهت توكنات اليوم 🌿')
+           await Msg.reply('انتهت توكنات اليوم 🌿')
       f.write(Res_Text)
       
 
@@ -201,7 +229,7 @@ async def Gemini_BTxt(TxtFile,Req_Count,lang_sy='ar',Api_Index=0) :
     file = client.files.upload(file=TxtFile)
     response = client.models.generate_content(model=Gemini_Model, contents=[Translate_Prompt, file])
     Res = await Rmv_Trans(response.text)
-    Res = Res + T_linebreak + open(TxtFile,'r').read() + T_linebreak
+    Res = Res + Tr_linebreak + open(TxtFile,'r').read() + Tr_linebreak
     Req_Count += 1
     return Res,Req_Count
   except Exception as err : 
@@ -218,6 +246,8 @@ async def Gemini_BTxt(TxtFile,Req_Count,lang_sy='ar',Api_Index=0) :
     else :
       return 'ERROR',Req_Count
       #raise ValueError('انتهت توكنات اليوم 🌿')
+
+#############
 
 async def Get_Msg(bot,Chat_id,msg_id):
   try : 
@@ -255,14 +285,13 @@ async def callback_query(CLIENT,CallbackQuery):
   Replied = await CallbackQuery.edit_message_text(" جار العمل  ")
   if Msg.text :
     Res,req = await Gemini_Trans(Msg.text,lang)
-    await Msg.reply_document(Res)
+    await Send_Text_Res(Msg,Res)
     await Replied.edit_text(" تم  ")
   
   elif Msg.document :
     if Msg.document.file_name.lower().endswith('txt') :
         txt = await Msg.download(file_name=Gemini_dl_path)
-        Res = await Gemini_Trans_Txt(txt,lang)
-        await Msg.reply_document(Res)
+        await Gemini_Trans_Txt(Msg,txt,lang)
         await Check_Dir(Gemini_dl_path)
         await Replied.edit_text(" تم  ")
 
