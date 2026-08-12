@@ -116,13 +116,42 @@ async def Grap_Lang(Sym):
       break
   return F_L
 
+
+async def Gemini_Trans(Text,lang_sy='ar',Req_Count=0,Api_Index=0):
+  Gemini_Apis = Apis
+  client = genai.Client(api_key=Gemini_Apis[Api_Index])
+  F_L = await Grap_Lang(lang_sy)
+  Translate_Prompt = f"""
+ترجم هذا النص بأكمله بدقة إلى {F_L}  👇
+  
+  """ + Text
+  try : 
+    response = client.models.generate_content(model=Gemini_Model, contents=Translate_Prompt)
+    Req_Count += 1
+    Res = await Rmv_Trans(response.text)
+    Res = Res + T_linebreak + Text + T_linebreak
+    return Res,Req_Count
+  except Exception as err : 
+    if 'retry' in str(err):
+         splitted = str(err).split('retry')[1][3:]
+         seconds = int(splitted.split('.')[0])
+         time.sleep(seconds)
+    Req_Count+=1
+    New_Index = Api_Index+1 
+    if New_Index < len(Gemini_Apis):
+      if Req_Count%15 == 0 :
+          await asyncio.sleep(60)
+          return await Gemini_Trans(Text,lang_sy,Req_Count,New_Index)
+    else :
+      raise ValueError('انتهت توكنات اليوم 🌿')
+    
 async def Gemini_Trans_Txt(TxtFile,lang_sy='ar'):
   mainDir = '/'.join(TxtFile.split('/')[:-1]) + '/'
   Res_Name = mainDir +  TxtFile.split('/')[-1].split('.')[0]
   Txt_File = Res_Name + '_Translated.txt'
   await Check_File(Txt_File)
   Text = open(TxtFile,'r').read()
-  await Gemini_CTxt(TxtFile,Txt_File,Text,lang_sy,0,10000)
+  await Gemini_CTxt(TxtFile,Txt_File,Text,lang_sy,0,8000)
   return Txt_File
   
 async def Gemini_CTxt(TxtFile,Txt_File,Text,lang_sy,Req_Count=0,Limit=20000):
@@ -134,10 +163,10 @@ async def Gemini_CTxt(TxtFile,Txt_File,Text,lang_sy,Req_Count=0,Limit=20000):
         Res_Name = mainDir +  TxtFile.split('/')[-1].split('.')[0]
         Txt_Part = Res_Name + f'_P0000{Num}.txt'
         open(Txt_Part,'a').write(part)
-        Res_Text,Req_Count = await Gemini_BTxt(Txt_Part,Req_Count,lang_sy)
+        Res_Text,Req_Count = await Gemini_Trans(part,lang_sy,Req_Count)
         if Res_Text == 'ERROR' :
-          New_Limit = Limit-5000
-          if New_Limit != 0 :
+          New_Limit = Limit-1000
+          if New_Limit > 0 :
             return await Gemini_CTxt(TxtFile,Txt_File,Text,lang_sy,Req_Count,New_Limit)
           else : 
            mainDir = '/'.join(TxtFile.split('/')[:-1]) + '/'
@@ -150,9 +179,9 @@ async def Gemini_CTxt(TxtFile,Txt_File,Text,lang_sy,Req_Count=0,Limit=20000):
         f.write(Res_Text)
         os.remove(Txt_Part)
     else : 
-      Res_Text,Req_Count = await Gemini_BTxt(TxtFile,Req_Count,lang_sy)
+      Res_Text,Req_Count = await Gemini_Trans(Text,lang_sy,Req_Count)
       if Res_Text == 'ERROR' :
-          New_Limit = Limit-5000
+          New_Limit = Limit-1000
           if New_Limit != 0 :
             return await Gemini_CTxt(TxtFile,Txt_File,Text,lang_sy,Req_Count,New_Limit)
           else : 
@@ -225,11 +254,8 @@ async def callback_query(CLIENT,CallbackQuery):
   Msg = await Get_Msg(bot,User_Id,msg_id)
   Replied = await CallbackQuery.edit_message_text(" جار العمل  ")
   if Msg.text :
-    await Check_Dir(Gemini_dl_path)
-    open(Gemini_dl_path+'text.txt','w').write(Msg.text)
-    Res = await Gemini_Trans_Txt(Gemini_dl_path+'text.txt',lang)
+    Res,req = await Gemini_Trans(Msg.text,lang)
     await Msg.reply_document(Res)
-    await Check_Dir(Gemini_dl_path)
     await Replied.edit_text(" تم  ")
   
   elif Msg.document :
