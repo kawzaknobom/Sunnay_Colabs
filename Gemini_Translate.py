@@ -1,18 +1,5 @@
 import nest_asyncio
 nest_asyncio.apply()
-import os
-
-#########################################################
-
-Bot_Token = os.getenv('TOKEN')
-
-
-if Bot_Token == '5623514771:AAEUXl-8JzuhWhRoQBujXQRALoSKYVbqHDA':
-   Admin_Id = 7007648648
-else :
-   Admin_Id = None
-
-########################################################
 
 from pyrogram.types import InlineKeyboardMarkup , InlineKeyboardButton , CallbackQuery , ForceReply,Message
 from pyrogram import Client, filters,enums
@@ -24,7 +11,38 @@ from pyrogram.enums import MessageEntityType
 from google import genai
 from google.genai import types
 from textwrap import wrap
-import os,asyncio,shutil,re,time
+import os,asyncio,shutil,re,time,requests
+      
+
+def Check_Gtoken(api_key) : 
+    url = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
+    response = requests.get(url)
+    if response.status_code == 200:
+        return True
+    else:
+        return False
+
+
+def Filter_Apis(Gemini_Tokens):
+  Apis = []
+  Gemini_Tokens = Gemini_Tokens.strip()
+  if ' ' in Gemini_Tokens : 
+    Gemini_Tokens = Gemini_Tokens.split(' ')
+  else : 
+    Gemini_Tokens = [Gemini_Tokens]
+  for Api in Gemini_Tokens : 
+    if Check_Gtoken(Api) :
+        Apis.append(Api)
+  return Apis
+
+
+#########################################################
+
+Bot_Token = os.environ['BOT_TOKEN']
+Gemini_Tokens = os.environ['Gemini_Tokens']
+Apis = Filter_Apis(Gemini_Tokens)
+
+########################################################
 
 def Pyrogram_Client(Bot_Token):
   Bot_Identifier = Bot_Token.split(':')[0]
@@ -143,7 +161,7 @@ async def Gemini_CTxt(TxtFile,Txt_File,Text,lang_sy,Req_Count=0,Limit=20000):
       
 
 async def Gemini_BTxt(TxtFile,Req_Count,lang_sy='ar',Api_Index=0) : 
-  Gemini_Apis = globals()['Gemini_Tokens']
+  Gemini_Apis = Apis
   client = genai.Client(api_key=Gemini_Apis[Api_Index])
   F_L = await Grap_Lang(lang_sy)
   Translate_Prompt = f"""
@@ -184,22 +202,7 @@ async def Get_Msg(bot,Chat_id,msg_id):
 
 @bot.on_message(filters.private & filters.incoming)
 async def _telegram_file(client, message):
-  if message.text :
-     if re.search(Gemini_Token_Pattern,message.text) :
-        open(Gemini_Dir+'gemini.txt','w').write(message.text)
-        await message.reply('تم تلقيم التوكنات')
-        globals()['Gemini_File'] = 'gemini.txt'
-        globals()['Gemini_Tokens'] = message.text.split(' ')
-        return
-     elif len(globals()['Gemini_File']) == 0 : 
-            await message.reply('قم بإرسال توكن Gemini')
-            return 
-
-  if message.document : 
-        if len(globals()['Gemini_File']) == 0 : 
-            await message.reply('قم بإرسال توكن Gemini')
-            return
-
+  
   CHOOSE_UR_LANG = "اختر اللغة المراد الترجمة إليها"
   LANGS_BUTTONS = []
   for lang in g_langs : 
@@ -242,8 +245,7 @@ async def callback_query(CLIENT,CallbackQuery):
 def main():
     try:
         bot.start()
-        if Admin_Id :
-          bot.send_message(Admin_Id,'Started ✅')
+        
         print("✅ Gemini Bot is ONLINE!")
         idle()
     finally:

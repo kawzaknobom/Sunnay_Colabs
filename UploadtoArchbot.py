@@ -5,7 +5,6 @@ nest_asyncio.apply()
 
 Bot_Token = os.getenv('TOKEN')
 
-
 ########################################################
 
 from pyrogram import Client, filters,enums,StopTransmission,idle
@@ -72,11 +71,18 @@ def File_Dl(File_Msg,dl_path):
 
 
 def upld2arch(upldarchpath,bucketname):
+  session = ia.get_session(config={
+    's3': {
+        'access': os.environ['access_key'],
+        'secret': os.environ['secret_key']
+    }
+})
   ia.upload(
-    itemname=bucketname,
+    identifier=bucketname,
     files=upldarchpath,
     verbose=True,
-    retries=3
+    retries=3,
+    archive_session=session
 )
   file_name = os.path.basename(upldarchpath)
   Arch_Url = f"https://archive.org/download/{bucketname}/{file_name}"
@@ -151,7 +157,7 @@ secret_access_key = {Archive_Dict[User_Id]['secret_access_key']}'''
                 Check_Dir(dl_path)
                 msg.reply(text = Link ,reply_to_message_id = msg.id)
 
-  elif message.video or message.audio or message.photo or message.voice or message.video_note :
+  elif message.video or message.audio or message.photo or message.voice or message.video_note or message.document :
     if len(Archive_Dict[User_Id]['Bucket']) != 0 and len(Archive_Dict[User_Id]['access_key_id']) != 0  and len(Archive_Dict[User_Id]['secret_access_key']) != 0 :
        Archive_Dict[User_Id]['Files'].append(message)
        message.reply(f'عدد الملفات {len(Archive_Dict[User_Id]['Files'])} ملفاً')
