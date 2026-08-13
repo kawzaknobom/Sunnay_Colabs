@@ -178,12 +178,13 @@ async def Gemini_CTxt(Msg,TxtFile,Txt_File,Text,lang_sy,Req_Count=0,Limit=20000)
       for Num,part in enumerate(Textlist) : 
         if len(rest.strip()) != 0 :
           part = rest + part
-        if '.' in part :
-          rest = part.split('.')[-1].strip()
-          part = part[:-len(rest)-1]
-        elif '\n' in part :
-          rest = part.split('\n')[-1].strip()
-          part = part[:-len(rest)-1]
+        if Num != len(Textlist)-1 : 
+          if '.' in part :
+            rest = part.split('.')[-1].strip()
+            part = part[:-len(rest)-1]
+          elif '\n' in part :
+            rest = part.split('\n')[-1].strip()
+            part = part[:-len(rest)-1]
         Txt_Part = TxtFile.replace(' ','_').replace('.txt',f'_P0000{Num}.txt')
         open(Txt_Part,'a').write(part)
         Res_Text,Req_Count = await Gemini_BTxt(Txt_Part,Req_Count,lang_sy)
