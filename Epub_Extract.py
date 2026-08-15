@@ -14,8 +14,10 @@ from pyrogram.types import InlineKeyboardMarkup , InlineKeyboardButton , Callbac
 from pyrogram import Client, filters
 from pyrogram import idle
 import time,shutil,random
-from epub2txt import epub2txt
 
+import ebooklib
+from ebooklib import epub
+from bs4 import BeautifulSoup
 
 def Pyrogram_Client(Bot_Token):
   Bot_Identifier = Bot_Token.split(':')[0]
@@ -61,12 +63,29 @@ def Check_Dir(Dir):
   if os.path.isdir(Dir):
       shutil.rmtree(Dir)
   Create_Dir(Dir)
-  
+
 @bot.on_message(filters.command('start') & filters.private)
 def command1(bot,message):
    User_Id = message.from_user.id
    message.reply('لبقية البوتات \n\n @sunnay6626')
-  
+
+
+def extract_epub(epub_path):
+    Res_File = epub_path.replace('.epub','.txt')
+    book = epub.read_epub(epub_path)
+    paragraphs = []
+
+    for item in book.get_items_of_type(ebooklib.ITEM_DOCUMENT):
+        soup = BeautifulSoup(item.get_content(), 'html.parser')
+        for element in soup.find_all(['p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6']):
+            text = element.get_text(separator=' ', strip=True)
+            if text:
+                paragraphs.append(text)
+
+    open(Res_File,'w').write("\n\n".join(paragraphs))
+    return Res_File
+
+
 
 @bot.on_message(filters.private & filters.incoming & (filters.document ))
 def _telegram_file(client, message):
@@ -75,8 +94,9 @@ def _telegram_file(client, message):
   dl_path = os.path.abspath(dl_path) + '/'
   if message.document.file_name.lower().endswith('epub'):
      Epub_File = File_Dl(message,dl_path)
-     Txt_File = epub2txt(Epub_File)
-     message.reply_document(Txt_File)
+     Res_File = Epub_File.replace('.epub','.txt')
+     Text = extract_epub(Epub_File)
+     message.reply_document(Res_File)
      Check_Dir(dl_path)
 
      
