@@ -385,7 +385,7 @@ def File_Dl(File_Msg,dl_path):
     else :
       Splitted = file_name.split('.')
       Name = Splitted[0]
-      Ex =  Splitted[1]
+      Ex =  Splitted[-1]
     custom_name = os.path.join(dl_path,f"{Name}_{random.randint(1,1000)}.{Ex}")
     File = File_Msg.download(file_name=custom_name)
   else :
