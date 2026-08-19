@@ -5,7 +5,6 @@ import os
 #########################################################
 
 
-Bot_Token = os.environ['Bot_Token']
 Api_Id = os.environ['Api_Id']
 Api_Hash = os.environ['Api_Hash']
 Session_String = os.environ['Session_String']
