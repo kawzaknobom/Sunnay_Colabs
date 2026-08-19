@@ -56,6 +56,7 @@ def Insert_Txt(File,Msg):
 async def Channel_Arc(Channel_Id) :
 
       Arch_Dir = f'./Arch_Dir_{Channel_Id}/'
+      Check_Dir(Arch_Dir)
       Arch_File = Arch_Dir +  f'Archive_{Channel_Id}.txt'
       Msgs_List = []
       async for Msg in bot.get_chat_history(Channel_Id) :
@@ -73,7 +74,7 @@ def main():
     try:
         bot.start()
         asyncio.run(Channel_Arc(Channel_User))
-        print("✅ pdf Bot is ONLINE!")
+        print("✅ تمت الأرشفة")
         idle()
     finally:
         if bot.is_connected:
