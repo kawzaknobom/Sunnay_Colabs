@@ -73,16 +73,21 @@ def command1(bot,message):
 def extract_epub(epub_path):
     Res_File = epub_path.replace('.epub','.txt')
     book = epub.read_epub(epub_path)
-    paragraphs = []
+    content_blocks = []
 
     for item in book.get_items_of_type(ebooklib.ITEM_DOCUMENT):
         soup = BeautifulSoup(item.get_content(), 'html.parser')
-        for element in soup.find_all(['p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6']):
-            text = element.get_text(separator=' ', strip=True)
-            if text:
-                paragraphs.append(text)
+        
+        for script_or_style in soup(["script", "style"]):
+            script_or_style.decompose()
 
-    open(Res_File,'w').write("\n\n".join(paragraphs))
+        text = soup.get_text(separator='\n', strip=True)
+        
+        if text:
+            content_blocks.append(text)
+
+    print(len(content_blocks))
+    open(Res_File,'w').write("\n\n".join(content_blocks))
     return Res_File
 
 
