@@ -4,7 +4,11 @@ import os
 
 #########################################################
 
-Bot_Token = os.getenv('TOKEN')
+Bot_Token = os.environ['Bot_Token']
+Api_Id = os.environ['Api_Id']
+Api_Hash = os.environ['Api_Hash']
+VOICE  = os.environ['VOICE']
+
 
 ########################################################
 
@@ -12,10 +16,9 @@ from pyrogram.types import InlineKeyboardMarkup , InlineKeyboardButton , Callbac
 from pyrogram import Client, filters
 from pyrogram import idle
 import os,time,shutil,asyncio,edge_tts
-from shakkala import Shakkala
-sh = Shakkala()
 
-VOICE = "ar-EG-ShakirNeural"
+# from shakkala import Shakkala
+# sh = Shakkala()
 
 # from TTS.api import TTS
 
@@ -42,13 +45,13 @@ async def tts_ai(text):
  #    file_path="output.wav")
  return Res
 
-async def tashkil_func(text):
-  input_int = sh.prepare_input(text)
-  model, graph = sh.get_model()
-  logits = model.predict(input_int)[0]
-  predicted_harakat = sh.logits_to_text(logits)
-  final_output = sh.get_final_text(text, predicted_harakat)
-  return final_output
+# async def tashkil_func(text):
+#   input_int = sh.prepare_input(text)
+#   model, graph = sh.get_model()
+#   logits = model.predict(input_int)[0]
+#   predicted_harakat = sh.logits_to_text(logits)
+#   final_output = sh.get_final_text(text, predicted_harakat)
+#   return final_output
 
 def Pyrogram_Client(Bot_Token):
   Bot_Identifier = Bot_Token.split(':')[0]
@@ -64,12 +67,12 @@ bot,Bot_Identifier = Pyrogram_Client(Bot_Token)
 @bot.on_message(filters.private & filters.incoming & (filters.text))
 async def _telegram_file(client, message):
   reply_msg = await message.reply('جار العمل')
-  text = await tashkil_func(message.text)
-  await message.reply(text)
-  # Audio_File = await tts_ai(text)
-  # # Audio_File = Mp3_Conv(Audio_File)
-  # await message.reply_document(Audio_File)
-  # os.remove(Audio_File)
+  # text = await tashkil_func(message.text)
+  # await message.reply(text)
+  Audio_File = await tts_ai(message.text)
+  # Audio_File = Mp3_Conv(Audio_File)
+  await message.reply_audio(Audio_File)
+  os.remove(Audio_File)
   await reply_msg.edit_text('تم الإنتاج ✅')
 
 
