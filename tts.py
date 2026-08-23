@@ -59,8 +59,7 @@ def Pyrogram_Client(Bot_Token):
   bot = Client(Session_file,api_id=Api_Id,api_hash=Api_Hash,bot_token=Bot_Token,in_memory=True)
   return bot,Bot_Identifier
 
-Api_Id = 15952578
-Api_Hash = '3600ce5f8f9b9e18cba0f318fa0e3600'
+
 bot,Bot_Identifier = Pyrogram_Client(Bot_Token)
 
 
