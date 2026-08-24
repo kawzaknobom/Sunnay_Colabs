@@ -27,15 +27,15 @@ Session_file = Token_Identifier +'_session_bot'
 bot = Client(Session_file,api_id=Api_Id,api_hash=Api_Hash,session_string=Session_String)
 
 
-def Msg_Copy(Msg,Chnl_Id):
+async def Msg_Copy(Msg,Chnl_Id):
   try : 
-     Copy = Msg.copy(str(Chnl_Id))
+     Copy = await Msg.copy(str(Chnl_Id))
      return Copy
   except FloodWait as e :
       time.sleep(e.value)
-      return Msg_Copy(Msg,Chnl_Id)
+      return await Msg_Copy(Msg,Chnl_Id)
   except Exception as err : 
-    Msg.reply(err)
+    await Msg.reply(err)
     pass
   
 async def Channel_Arc(Original_Channel,Forward_Channel) :
@@ -43,7 +43,7 @@ async def Channel_Arc(Original_Channel,Forward_Channel) :
       async for Msg in bot.get_chat_history(Original_Channel) :
         Msgs_List.append(Msg)
       for Msg in reversed(Msgs_List):
-          Msg_Copy(Msg,Forward_Channel)
+          Copied = await Msg_Copy(Msg,Forward_Channel)
 
 ##############
 
