@@ -50,7 +50,7 @@ def Insert_Txt(File,Msg):
       if Msg.caption == None : 
         Text = Link 
       else : 
-        Text = Link +  '\n' + Msg.caption 
+        Text = Link +  '\n\n' + Msg.caption 
    f.write(Text+T_linebreak)
 
 async def Channel_Arc(Channel_Id) :
