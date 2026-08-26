@@ -43,13 +43,13 @@ async def Channel_Arc(Original_Channel,Forward_Channel,Start_Msg_Id) :
       Msgs_List = []
       async for Msg in bot.get_chat_history(Original_Channel) :
         Msgs_List.append(Msg)
+      End_Msg_Id = len(Msgs_List)
       Msgs_List = reversed(Msgs_List)
       if Start_Msg_Id != 0 :
           Start_Msg_Id -= 1
 
-      for ind in range(Start_Msg_Id,len(Msgs_List)):
+      for ind in range(Start_Msg_Id,End_Msg_Id):
           Copied = await Msg_Copy(Msgs_List[ind],Forward_Channel)
-      End_Msg_Id = len(Msgs_List)
       await bot.send_message(Forward_Channel, f"🟥 {Forward_Channel}_{End_Msg_Id}")
 
        
