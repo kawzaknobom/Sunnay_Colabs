@@ -10,6 +10,8 @@ Api_Hash = os.environ['Api_Hash']
 Session_String = os.environ['Session_String']
 Original_Channel = os.environ['Original_Channel']
 Forward_Channel = os.environ['Forward_Channel']
+Start_Msg_Id = int(os.environ['Start_Msg_Id'])
+
 
 #########################################################
 
@@ -35,15 +37,22 @@ async def Msg_Copy(Msg,Chnl_Id):
       time.sleep(e.value)
       return await Msg_Copy(Msg,Chnl_Id)
   except Exception as err : 
-    await Msg.reply(err)
     pass
   
-async def Channel_Arc(Original_Channel,Forward_Channel) :
+async def Channel_Arc(Original_Channel,Forward_Channel,Start_Msg_Id) :
       Msgs_List = []
       async for Msg in bot.get_chat_history(Original_Channel) :
         Msgs_List.append(Msg)
-      for Msg in reversed(Msgs_List):
-          Copied = await Msg_Copy(Msg,Forward_Channel)
+      Msgs_List = reversed(Msgs_List)
+      if Start_Msg_Id != 0 :
+          Start_Msg_Id -= 1
+
+      for ind in range(Start_Msg_Id,len(Msgs_List)):
+          Copied = await Msg_Copy(Msgs_List[ind],Forward_Channel)
+      End_Msg_Id = len(Msgs_List)
+      await bot.send_message(Forward_Channel, f"🟥 {Forward_Channel}_{End_Msg_Id}")
+
+       
 
 ##############
 
@@ -51,7 +60,7 @@ async def Channel_Arc(Original_Channel,Forward_Channel) :
 def main():
     try:
         bot.start()
-        asyncio.run(Channel_Arc(Original_Channel,Forward_Channel))
+        asyncio.run(Channel_Arc(Original_Channel,Forward_Channel,Start_Msg_Id))
         print("✅ تمت الأرشفة")
         idle()
     finally:
