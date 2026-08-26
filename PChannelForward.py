@@ -44,7 +44,7 @@ async def Channel_Arc(Original_Channel,Forward_Channel,Start_Msg_Id) :
       async for Msg in bot.get_chat_history(Original_Channel) :
         Msgs_List.append(Msg)
       End_Msg_Id = len(Msgs_List)
-      Msgs_List = reversed(Msgs_List)
+      Msgs_List = list(reversed(Msgs_List))
       if Start_Msg_Id != 0 :
           Start_Msg_Id -= 1
 
