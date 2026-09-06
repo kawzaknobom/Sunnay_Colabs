@@ -37,12 +37,6 @@ async def tts_ai(text):
  Res = 'test_arabic.mp3'
  communicate = edge_tts.Communicate(text, VOICE)
  await communicate.save(Res)
- # Res = "output.wav"
- # await tts.tts_to_file(
- #    text=text,
- #    speaker_wav="Cloned_Voice_Link.split('/')[-1]", 
- #    language="ar",
- #    file_path="output.wav")
  return Res
 
 # async def tashkil_func(text):

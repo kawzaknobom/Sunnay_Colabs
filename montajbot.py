@@ -13,6 +13,7 @@ from pyrogram.errors import FloodWait
 from pyrogram.enums import MessageEntityType
 from pyrogram.types import Message
 import shutil,os,time,random
+from PIL import Image
 
 Montaj_Dict = {}
 
@@ -61,7 +62,7 @@ def File_Dl(File_Msg,dl_path):
     else :
       Splitted = file_name.split('.')
       Name = Splitted[0]
-      Ex =  Splitted[1]
+      Ex =  Splitted[-1]
     custom_name = os.path.join(dl_path,f"{Name}_{random.randint(1,1000)}.{Ex}")
     File = File_Msg.download(file_name=custom_name)
   else :
@@ -91,7 +92,15 @@ def Mp3_Conv(File):
 def Vid_Mon(img_path,aud_path):
       Img_ex = '.' + img_path.split('.')[-1]
       vid_path = img_path.replace(Img_ex,'_Montaj.mp4')
-      Montaj_Cmd = f'ffmpeg -r 1 -loop 1 -y -i "{img_path}" -i "{aud_path}" -c:v libx264 -tune stillimage -c:a copy -shortest -vf scale=1920:1080 "{vid_path}"'
+      with Image.open(img_path) as img:
+        width, height = img.size
+      width = width if width % 2 == 0 else width - 1
+      height = height if height % 2 == 0 else height - 1
+      Montaj_Cmd = (
+        f'ffmpeg -r 1 -loop 1 -y -i "{img_path}" -i "{aud_path}" '
+        f"-c:v libx264 -tune stillimage -c:a copy -shortest "
+        f'-vf "scale={width}:{height}" "{vid_path}"'
+    )
       os.system(Montaj_Cmd)
       return vid_path
 
