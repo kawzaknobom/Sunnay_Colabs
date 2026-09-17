@@ -175,7 +175,11 @@ async def Gemini_CTxt(Msg,TxtFile,Txt_File,Text,lang_sy,Req_Count=0,Limit=20000)
   with open(Txt_File,'a') as f : 
     if len(Text) > Limit : 
       Textlist = await Wrap_Text(Text,Limit)
+      rep = f"عدد الأجزاء ( 0 | {len(Textlist)} )"
+      Msg_Reply = await Msg.reply(rep)
       for Num,part in enumerate(Textlist) : 
+        rep = f"عدد الأجزاء ( {Num+1} | {len(Textlist)} )"
+        await Msg_Reply.edit_text(rep)
         if len(rest.strip()) != 0 :
           part = rest + part
         if Num != len(Textlist)-1 : 
