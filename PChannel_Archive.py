@@ -82,7 +82,7 @@ async def Channel_Arc(Channel_Id) :
       Msg_Media = f"@{Channel_Id}" + '\n\n'
       for Msg in reversed(Msgs_List):
         Insert_Txt(Arch_File,Msg)
-        if Msg.media and not Msg.sticker:
+        if Msg.media and not Msg.sticker and not Msg.web_page :
            Link = f"« https://t.me/{Msg.chat.username}/{Msg.id} »"
            Msg_Media += (Link + '\n\n')
       res_msg = await bot.send_document("me",Arch_File,caption=Channel_Id)
