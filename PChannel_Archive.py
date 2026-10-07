@@ -14,8 +14,10 @@ Channel_User = os.environ['Channel_User']
 
 
 from pyrogram import Client,idle
+from pyrogram.errors import FloodWait
+from textwrap import wrap
 
-import asyncio,shutil
+import asyncio,shutil,time
 
 
 Token_Identifier = Session_String.split('-')[0]
@@ -32,7 +34,6 @@ def Check_Dir(Dir):
   if os.path.isdir(Dir):
       shutil.rmtree(Dir)
   Create_Dir(Dir)
-
 
 def Insert_Txt(File,Msg):
   T_linebreak = '\n\n ◾ــــــــــــــ◾ \n\n'
@@ -53,17 +54,39 @@ def Insert_Txt(File,Msg):
         Text = Link +  '\n\n' + Msg.caption 
    f.write(Text+T_linebreak)
 
+async def Send_Text_Res(Media_Msg,Text): 
+  if len(Text) <= 4096 :
+    if len(Text.strip()) != 0 :
+        await Media_Msg.reply(Text,reply_to_message_id = Media_Msg.id)
+  else :
+      textlist = wrap(Text.replace('\n','$'),4096)
+      for part in textlist:
+        if '$' in part : 
+          part = part.replace('$','\n')
+        await Flood_Wait_fix(Media_Msg,part)
+  
+async def Flood_Wait_fix(Media_Msg,part):
+  try : 
+   await Media_Msg.reply(part)
+  except FloodWait as err : 
+   time.sleep(err.x)
+   return await Flood_Wait_fix(Media_Msg,part)
+  
 async def Channel_Arc(Channel_Id) :
-
       Arch_Dir = f'./Arch_Dir_{Channel_Id}/'
       Check_Dir(Arch_Dir)
       Arch_File = Arch_Dir +  f'Archive_{Channel_Id}.txt'
       Msgs_List = []
       async for Msg in bot.get_chat_history(Channel_Id) :
         Msgs_List.append(Msg)
+      Msg_Media = f"@{Channel_Id}" + '\n\n'
       for Msg in reversed(Msgs_List):
         Insert_Txt(Arch_File,Msg)
-      await bot.send_document("me",Arch_File,caption=Channel_Id)
+        if Msg.media :
+           Link = f"« https://t.me/{Msg.chat.username}/{Msg.id} »"
+           Msg_Media += (Link + '\n\n')
+      res_msg = await bot.send_document("me",Arch_File,caption=Channel_Id)
+      await Send_Text_Res(res_msg,Msg_Media)
       Check_Dir(Arch_Dir)
   
 
