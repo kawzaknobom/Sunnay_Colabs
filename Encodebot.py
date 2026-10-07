@@ -141,7 +141,7 @@ def command1(bot,message):
 
 
 @bot.on_message(filters.private & filters.incoming & filters.video)
-async def _telegram_file(client, message):
+def _telegram_file(client, message):
     message.reply('جار الضغط',reply_to_message_id = message.id)
     File = File_Dl(message,Trim_Path)
     Res = Encode_Vid(File)
