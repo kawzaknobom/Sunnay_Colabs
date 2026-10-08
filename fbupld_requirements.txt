@@ -1,3 +1,5 @@
 Pyrogram
 TgCrypto
 requests
+pymongo
+nest_asyncio

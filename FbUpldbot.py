@@ -10,7 +10,7 @@ from pyrogram.types import InlineKeyboardMarkup , InlineKeyboardButton , Callbac
 from pyrogram.errors import FloodWait
 from pyrogram import Client, filters
 
-import time,json,os,shutil,requests
+import time,json,os,shutil,requests,random
 
 import pymongo,os
 
@@ -108,14 +108,12 @@ def Pyrogram_Client(Bot_Token):
 
 bot,Bot_Identifier = Pyrogram_Client(Bot_Token)
 
-upld_dir = f"/{Bot_Identifier}_Dir/"
+upld_dir = f"./{Bot_Identifier}_Dir/"
 
 Bulking,Accum = {},{}
 Skip_Key = 'skip'
 
 MNDB = Mongo_Db("Telegram_Db","FbBot")
-
-Back_Chnl_Id = 'hvjjgvb'
 
 
 ################# Extra Funcs ##########
@@ -175,15 +173,29 @@ def Check_File(File):
   if os.path.isfile(File):
       os.remove(File)
 
+
 def File_Dl(File_Msg,dl_path):
-  if File_Msg.photo : 
-    ex = '.jpg'
-    file_n = File_Msg.photo.file_unique_id
-  elif File_Msg.video : 
-    ex = '.mp4'
-    file_n = File_Msg.video.file_unique_id
-  file = f'./{file_n+ex}'
-  File = File_Msg.download(file_name=file)
+  if File_Msg.audio or File_Msg.video or File_Msg.document  :
+    if File_Msg.audio :
+      file_name = File_Msg.audio.file_name
+    elif File_Msg.video :
+      file_name = File_Msg.video.file_name
+    elif File_Msg.document :
+      file_name = File_Msg.document.file_name
+    if file_name == None :
+      Name = File_Msg.id
+      if File_Msg.audio : 
+        Ex = 'mp3'
+      elif File_Msg.video : 
+        Ex = 'mp4'
+    else :
+      Splitted = file_name.split('.')
+      Name = Splitted[0]
+      Ex =  Splitted[-1]
+    custom_name = os.path.join(dl_path,f"{Name}_{random.randint(1,1000)}.{Ex}")
+    File = File_Msg.download(file_name=custom_name)
+  else :
+    File = File_Msg.download(file_name=dl_path)
   return File 
 
 
@@ -264,33 +276,101 @@ def post_text(Access_Token,Page_Id,text):
     feedid = response.text.replace('"','').replace('{','').replace('}','').split(':')[1].split('_')[1]
     feedlink = f"https://www.facebook.com/{Page_Id}/posts/{feedid}/"
     return feedlink
+
     
-def up_func(Access_Token,Page_Id,Media_Cap,fb_path,publish=False) : 
-  if fb_path.lower().endswith(Image_forms) : 
+def upload_video_resumable(access_token, page_id, video_path, description="", publish=False):
+    file_size = os.path.getsize(video_path)
+    base_url = f"https://graph.facebook.com/v22.0/{page_id.strip()}/videos"
+    
+    # 1. Phase: START
+    start_payload = {
+        'access_token': access_token.strip(),
+        'upload_phase': 'start',
+        'file_size': file_size
+    }
+    res = requests.post(base_url, data=start_payload, headers=headers).json()
+    upload_session_id = res.get('upload_session_id')
+    start_offset = int(res.get('start_offset', 0))
+    end_offset = int(res.get('end_offset', 0))
+
+    if not upload_session_id:
+        raise Exception(f"Failed to start video upload session: {res}")
+
+    # 2. Phase: TRANSFER (Upload Chunks)
+    chunk_size = 4 * 1024 * 1024  # 4 MB لكل جزء
+    with open(video_path, 'rb') as f:
+        while start_offset < file_size:
+            f.seek(start_offset)
+            chunk_data = f.read(end_offset - start_offset)
+            
+            transfer_payload = {
+                'access_token': access_token.strip(),
+                'upload_phase': 'transfer',
+                'upload_session_id': upload_session_id,
+                'start_offset': start_offset
+            }
+            files = {'video_file_chunk': chunk_data}
+            
+            t_res = requests.post(base_url, data=transfer_payload, files=files, headers=headers).json()
+            start_offset = int(t_res.get('start_offset', file_size))
+            end_offset = int(t_res.get('end_offset', file_size))
+
+    # 3. Phase: FINISH
+    finish_payload = {
+        'access_token': access_token.strip(),
+        'upload_phase': 'finish',
+        'upload_session_id': upload_session_id,
+        'title': 'Video Upload',
+        'description': description,
+        'published': str(publish).lower()
+    }
+    f_res = requests.post(base_url, data=finish_payload, headers=headers).json()
+    return f_res.get("id")
+
+
+def up_func(Access_Token, Page_Id, Media_Cap, fb_path, publish=False):
+    # إذا كان الملف صورة
+    if fb_path.lower().endswith(Image_forms):
         section = 'photos'
         cap = 'message'
-  else :
-        section = 'videos'
-        cap = 'description'
+        files = {'source': open(fb_path, 'rb')}
+        payload = {'access_token': Access_Token.strip(), cap: Media_Cap, 'published': f"{publish}"}
+        url = f"https://graph.facebook.com/v22.0/{Page_Id.strip()}/{section}"
+        response = requests.post(url, data=payload, files=files, headers=headers)
         
-  files = {'source' : open(fb_path,'rb')}
-  payload = {'access_token': Access_Token.strip() , cap : Media_Cap,'published':f"{publish}" }
-  url = f'''https://graph.facebook.com/v22.0/{Page_Id.strip()}/{section}'''
-  response = requests.post(url,data=payload,files=files,headers=headers)
-  try:
-    Media_id = json.loads(response.text)["id"]
-  except Exception as err  :
-    print(response.text)
-    # if section == 'videos' :
-    #   fb_path = Media_Compress(fb_path)
-    #   return up_func(Access_Token,Page_Id,Media_Cap,fb_path,publish) 
-  os.remove(fb_path)
-  if publish :
-    medialink = f"https://www.facebook.com/{Page_Id}/{section}/{Media_id}/"
-    return medialink
-  else :
-    return Media_id
-  
+        try:
+            Media_id = json.loads(response.text)["id"]
+        except Exception as err:
+            print(response.text)
+            Media_id = None
+            
+    # إذا كان الملف فيديو، يتم رفعه باستخدام Resumable Upload لتجنب 413
+    else:
+        section = 'videos'
+        try:
+            Media_id = upload_video_resumable(Access_Token, Page_Id, fb_path, description=Media_Cap, publish=publish)
+        except Exception as err:
+            print(f"Error uploading video: {err}")
+            Media_id = None
+
+    if os.path.exists(fb_path):
+        os.remove(fb_path)
+
+    if publish and Media_id:
+        medialink = f"https://www.facebook.com/{Page_Id}/{section}/{Media_id}/"
+        return medialink
+    else:
+        return Media_id
+
+
+def Encode_Vid(File):
+    Ext = '.' + File.split('.')[-1]
+    Mp4_File = File.replace(Ext,'_Encoded.mp4')
+    Vid_Encode = f'ffmpeg -i "{File}" -c:a aac -codec:v h264 -b:v 1000k "{Mp4_File}" -y'
+    os.system(Vid_Encode)
+    return Mp4_File
+
+
 def upld_album(Access_Token,Page_Id,prof_id,msg_list,Media_Cap):
     file_ids = []
     for msg in msg_list : 
@@ -401,8 +481,7 @@ def command1(bot,message):
       Data = Accum[User_Id][2]
       for Case in Accum[User_Id][3:] :
         Case_Msg = Get_Msg(bot,User_Id,Case)
-        Copied = Msg_Copy(Case_Msg,Back_Chnl_Id)
-        Add_Item(Case_Msg,Data,Copied.id)
+        Add_Item(Case_Msg,Data,Case_Msg.id)
     else :
       Call_Id = Accum[User_Id][1]
       Call_Msg = Get_Msg(bot,User_Id,Call_Id)
@@ -488,7 +567,7 @@ def callback_query(CLIENT,CallbackQuery):
             Bulk_List = [Msg_Id,]
           Creds = MNDB.Grap_Values(User_Id,Page_Name).get('Data')[0]
           try :
-            Feed_Link = Fb_Upld(bot,Back_Chnl_Id,Creds,upld_dir,Bulk_List)
+            Feed_Link = Fb_Upld(bot,User_Id,Creds,upld_dir,Bulk_List)
           except Exception as err:
             pass
           Reply_Msg = Get_Msg(bot,User_Id,Rpl_Id)
@@ -520,14 +599,14 @@ def callback_query(CLIENT,CallbackQuery):
           Msg_List = Msg_Mass.split('-')
           for N,Msg in enumerate(Msg_List) : 
            Msg = Get_Msg(bot,User_Id,Msg)
-           Copy = Msg_Copy(Msg,Back_Chnl_Id)
+           Copy = Msg
            #Copy = Msg.copy(int(Back_Chnl_Id))
            Copied+= str(Copy.id) + ('-' if N < len(Msg_List)-1 else '')
         else :
           if (No == len(Msgs_Bulk)-1) and (len(Msg_Mass.strip()) == 0) :
              continue
           Msg = Get_Msg(bot,User_Id,Msg_Mass)
-          Copy = Msg_Copy(Msg,Back_Chnl_Id)
+          Copy = Msg
           #Copy = Msg.copy(int(Back_Chnl_Id))
           Copied+= str(Copy.id)
         if not (((No == len(Msgs_Bulk)-1) and (len(Msg_Mass.strip()) == 0)) or ((No == len(Msgs_Bulk)-2) and (len(Msgs_Bulk[No+1].strip()) == 0))) :
