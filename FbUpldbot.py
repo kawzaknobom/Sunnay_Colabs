@@ -162,16 +162,17 @@ def Get_Msg(bot,Chat_id,msg_id):
       return  Get_Msg(bot,Chat_id,msg_id)
   except : 
       pass
-
+   
+def Create_Dir(Dir):
+  if not os.path.isdir(Dir):
+    Mkdir_Cmd = f'mkdir -p "{Dir}"'
+    os.system(Mkdir_Cmd)
+      
 def Check_Dir(Dir):
   if os.path.isdir(Dir):
       shutil.rmtree(Dir)
-  for file in os.listdir(Dir) :
-    Check_File(Dir+file)
+  Create_Dir(Dir)
 
-def Check_File(File):
-  if os.path.isfile(File):
-      os.remove(File)
 
 
 def File_Dl(File_Msg,dl_path):
@@ -204,7 +205,7 @@ def File_Dl(File_Msg,dl_path):
 
 def Fb_Upld(bot,back_id,Creds,upld_fb_dir,pack):
    Page_Id,Page_Prof_id,Access_Token = Creds.split('|')
-   # Check_Dir(upld_fb_dir)
+   Check_Dir(upld_fb_dir)
    Main_Cap = ''
    Media_Msgs = []
    for msg_id in pack : 
@@ -277,7 +278,7 @@ def post_text(Access_Token,Page_Id,text):
     feedlink = f"https://www.facebook.com/{Page_Id}/posts/{feedid}/"
     return feedlink
 
-    
+
 def upload_video_resumable(access_token, page_id, video_path, description="", publish=False):
     file_size = os.path.getsize(video_path)
     base_url = f"https://graph.facebook.com/v22.0/{page_id.strip()}/videos"
@@ -567,8 +568,10 @@ def callback_query(CLIENT,CallbackQuery):
             Bulk_List = [Msg_Id,]
           Creds = MNDB.Grap_Values(User_Id,Page_Name).get('Data')[0]
           try :
+            print('asdasd')
             Feed_Link = Fb_Upld(bot,User_Id,Creds,upld_dir,Bulk_List)
           except Exception as err:
+            print(str(err))
             pass
           Reply_Msg = Get_Msg(bot,User_Id,Rpl_Id)
           try :
