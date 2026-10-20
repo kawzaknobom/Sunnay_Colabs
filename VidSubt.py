@@ -180,7 +180,7 @@ async def whisper_transcribe_and_translate_srt(media_file):
   
   audio_file = await Mp3_Conv(media_file)
   
-  model = WhisperModel("large-v3", device="cpu", compute_type="int8")
+  model = WhisperModel("large-v3", device="cuda", compute_type="int8")
   segments, info = model.transcribe(audio_file, beam_size=5, vad_filter=True)
   
   srt_content = ""
