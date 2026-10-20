@@ -1,32 +1,102 @@
-import nest_asyncio, os
+import nest_asyncio, os, json, textwrap, asyncio
 nest_asyncio.apply()
 
 #########################################################
 
 Bot_Token = os.getenv('TOKEN')
 
+if Bot_Token == '5623514771:AAEUXl-8JzuhWhRoQBujXQRALoSKYVbqHDA':
+   Admin_Id = 7007648648
+else :
+   Admin_Id = None
+
 ########################################################
 
 from pyrogram.types import InlineKeyboardMarkup , InlineKeyboardButton , CallbackQuery , ForceReply, Message
 from pyrogram import Client, filters
-from pyrogram.errors import FloodWait
+from pyrogram.errors import FloodWait, MessageTooLong
 from pyrogram import idle
-import os, time, shutil, asyncio
 
 os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
 from faster_whisper import WhisperModel
-from deep_translator import GoogleTranslator
+from google import genai
+
+# اسم النموذج المستقر للترجمة السريعة
+GEMINI_MODEL_NAME = 'gemini-2.5-flash'
+
+# جلب جميع التوكنات المفصولة بمسافة " " من متغير البيئة
+gemini_keys_env = os.getenv('GEMINI_API_KEYS') or os.getenv('GEMINI_API_KEY') or ''
+raw_gemini_keys = [k.strip() for k in gemini_keys_env.split(' ') if k.strip()]
+
+VALID_GEMINI_KEYS = []
+current_key_index = 0
+
+def test_single_key(key):
+    """دالة اختبار التوكن الواحدة بشكل منفصل"""
+    try:
+        client = genai.Client(api_key=key)
+        client.models.generate_content(
+            model=GEMINI_MODEL_NAME,
+            contents="Test",
+        )
+        return True, None
+    except Exception as e:
+        return False, str(e).splitlines()[0]
+
+async def validate_and_filter_keys_async():
+    """اختبار سريع وغير محجب لجميع التوكنات مع مهلة زمنية لكل توكن"""
+    global VALID_GEMINI_KEYS
+    if not raw_gemini_keys:
+        print("⚠️ تحذير: لم يتم العثور على أي توكن لجمناي في متغيرات البيئة.")
+        return
+
+    print(f"🔍 جاري فحص واختبار {len(raw_gemini_keys)} توكن لـ Gemini...")
+    for index, key in enumerate(raw_gemini_keys):
+        try:
+            is_valid, err = await asyncio.wait_for(
+                asyncio.to_thread(test_single_key, key),
+                timeout=4.0
+            )
+            if is_valid:
+                VALID_GEMINI_KEYS.append(key)
+                print(f"  [✅ صالح] التوكن رقم {index + 1}")
+            else:
+                print(f"  [❌ تالف] التوكن رقم {index + 1} - السبب: {err}")
+        except asyncio.TimeoutError:
+            print(f"  [⏳ انتهت المهلة] التوكن رقم {index + 1} لم يستجب وتم استبعاده.")
+        except Exception as e:
+            print(f"  [❌ خطأ] التوكن رقم {index + 1} - {e}")
+            
+    print(f"✨ إجمالي التوكنات الصالحة للعمل: {len(VALID_GEMINI_KEYS)} من {len(raw_gemini_keys)}")
+
+def get_next_valid_client():
+    global current_key_index
+    if not VALID_GEMINI_KEYS:
+        raise ValueError("❌ لا توجد أي توكنات صالحة لجمناي للعمل بها!")
+    
+    key = VALID_GEMINI_KEYS[current_key_index % len(VALID_GEMINI_KEYS)]
+    current_key_index += 1
+    return genai.Client(api_key=key)
 
 Api_Id = 15952578
 Api_Hash = '3600ce5f8f9b9e18cba0f318fa0e3600'
 Audio_Forms = (".mp3", ".ogg", ".m4a", ".aac", ".flac", ".wav", ".wma", ".opus", ".3gpp")
 Video_Forms = (".mp4", ".mkv", ".mov", ".avi", ".wmv", ".avchd", ".webm", ".flv")
 
+async def run_command(cmd):
+  proc = await asyncio.create_subprocess_shell(
+      cmd,
+      stdout=asyncio.subprocess.PIPE,
+      stderr=asyncio.subprocess.PIPE
+  )
+  stdout, stderr = await proc.communicate()
+  return stdout.decode(), stderr.decode()
+
 async def Mp3_Conv(File):
   mainDir = '/'.join(File.split('/')[:-1]) + '/'
   Mp3_File = mainDir + File.split('/')[-1].split('.')[0] + '_Conv.mp3'
   Mp3_Cmd = f'ffmpeg -i "{File}" -q:a 0 -map a "{Mp3_File}" -y'
-  os.system(Mp3_Cmd)
+  await run_command(Mp3_Cmd)
   return Mp3_File
 
 def format_time(seconds):
@@ -36,19 +106,82 @@ def format_time(seconds):
   milliseconds = int(int((seconds - int(seconds)) * 1000))
   return f"{hours:02d}:{minutes:02d}:{secs:02d},{milliseconds:03d}"
 
+def wrap_arabic_text(text, width=38):
+  if not text:
+    return ""
+  lines = textwrap.wrap(text, width=width)
+  return "\n".join(lines)
+
+async def get_video_height(video_file):
+  try:
+    cmd = f'ffprobe -v error -select_streams v:0 -show_entries stream=height -of json "{video_file}"'
+    stdout, _ = await run_command(cmd)
+    data = json.loads(stdout)
+    height = data['streams'][0]['height']
+    return int(height)
+  except Exception as e:
+    print(f"Error getting video height: {e}")
+    return 720
+
+async def translate_srt_with_gemini(srt_file_path):
+  if not VALID_GEMINI_KEYS:
+    raise ValueError("❌ لا توجد أي توكنات صالحة لجمناي متروكة بعد الفحص!")
+
+  with open(srt_file_path, 'r', encoding='utf-8') as f:
+    srt_content = f.read()
+
+  prompt = (
+    "You are a professional subtitle translator. Translate the following SRT subtitle content from English to Arabic. "
+    "Strictly adhere to these rules:\n"
+    "1. Keep the exact SRT format, subtitle index numbers, and timecodes (e.g., 00:00:01,000 --> 00:00:04,000) completely unchanged.\n"
+    "2. Translate ONLY the English text spoken in the subtitles into natural, accurate, and fluent Arabic suitable for video subtitles.\n"
+    "3. Do not add any extra explanations, notes, or markdown formatting outside the SRT structure. Return only the valid translated SRT content.\n\n"
+    f"{srt_content}"
+  )
+
+  translated_text = None
+  max_attempts = len(VALID_GEMINI_KEYS)
+
+  for attempt in range(max_attempts):
+    try:
+      client = get_next_valid_client()
+      response = await asyncio.to_thread(
+          client.models.generate_content,
+          model=GEMINI_MODEL_NAME,
+          contents=prompt,
+      )
+      
+      if response and response.text:
+        translated_text = response.text.strip()
+        if translated_text.startswith("```"):
+          lines = translated_text.splitlines()
+          if lines[0].startswith("```"):
+            lines = lines[1:]
+          if lines and lines[-1].startswith("```"):
+            lines = lines[:-1]
+          translated_text = "\n".join(lines).strip()
+        break 
+    except Exception as e:
+      print(f"⚠️ خطأ أثناء الترجمة بمحاولة {attempt + 1}: {e}")
+      continue
+
+  if not translated_text:
+    raise Exception("فشلت عملية الترجمة باستخدام التوكنات الصالحة.")
+
+  with open(srt_file_path, 'w', encoding='utf-8') as f:
+    f.write(translated_text)
+
+  return srt_file_path
+
 async def whisper_transcribe_and_translate_srt(media_file):
   mainDir = '/'.join(media_file.split('/')[:-1]) + '/'
   base_name = media_file.split('/')[-1].split('.')[0]
   Srt_File = mainDir + base_name + '_AR.srt'
   
-  # استخراج الصوت للتفريغ السريع
   audio_file = await Mp3_Conv(media_file)
   
-  # تحميل نموذج Whisper للتفريغ الدقيق باللغة الإنجليزية
-  model = WhisperModel("large-v3", device="cuda", compute_type="int8")
-  segments, info = model.transcribe(audio_file, beam_size=5, vad_filter=True, language="en")
-  
-  translator = GoogleTranslator(source='en', target='ar')
+  model = WhisperModel("large-v3", device="cpu", compute_type="int8")
+  segments, info = model.transcribe(audio_file, beam_size=5, vad_filter=True)
   
   srt_content = ""
   for i, segment in enumerate(segments, start=1):
@@ -56,13 +189,8 @@ async def whisper_transcribe_and_translate_srt(media_file):
     end_str = format_time(segment.end)
     text_en = segment.text.strip()
     
-    # ترجمة النص الإنجليزي إلى العربية
-    try:
-      text_ar = translator.translate(text_en) if text_en else ""
-    except Exception:
-      text_ar = text_en
-      
-    srt_content += f"{i}\n{start_str} --> {end_str}\n{text_ar}\n\n"
+    wrapped_text = wrap_arabic_text(text_en, width=38) if text_en else ""
+    srt_content += f"{i}\n{start_str} --> {end_str}\n{wrapped_text}\n\n"
     
   with open(Srt_File, 'w', encoding='utf-8') as f:
     f.write(srt_content)
@@ -70,6 +198,8 @@ async def whisper_transcribe_and_translate_srt(media_file):
   if os.path.exists(audio_file):
     os.remove(audio_file)
     
+  await translate_srt_with_gemini(Srt_File)
+  
   return Srt_File
 
 async def burn_subtitles_ffmpeg(video_file, srt_file):
@@ -77,15 +207,24 @@ async def burn_subtitles_ffmpeg(video_file, srt_file):
   base_name = video_file.split('/')[-1].split('.')[0]
   output_video = mainDir + base_name + '_subtitled.mp4'
   
+  height = await get_video_height(video_file)
+  font_size = max(18, min(34, int(height * 0.042)))
+  
   safe_srt_path = srt_file.replace('\\', '/').replace(':', '\\\\:')
   
-  # FontSize=40, خلفية سوداء مظللة BorderStyle=4, BackColour أسود شبيف
+  # تحديد مسار خط يدعم العربية صراحة لتجنب ظهور المربعات الفارغة
+  font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+  if not os.path.exists(font_path):
+    font_path = "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf"
+  
+  safe_font_path = font_path.replace('\\', '/').replace(':', '\\\\:')
+
   ffmpeg_cmd = (
-    f'ffmpeg -i "{video_file}" -vf "subtitles=\'{safe_srt_path}\':force_style=\'FontSize=40,PrimaryColour=&H00FFFFFF,BackColour=&H80000000,BorderStyle=4\'" '
+    f'ffmpeg -i "{video_file}" -vf "subtitles=\'{safe_srt_path}\':force_style=\'Fontfile={safe_font_path},FontSize={font_size},PrimaryColour=&H00FFFFFF,BackColour=&H80000000,BorderStyle=4,MarginV=25,Encoding=1\'" '
     f'-c:a copy "{output_video}" -y'
   )
   
-  os.system(ffmpeg_cmd)
+  await run_command(ffmpeg_cmd)
   return output_video
 
 def Pyrogram_Client(Bot_Token):
@@ -103,24 +242,21 @@ async def command1(bot, message):
   
 @bot.on_message(filters.private & filters.incoming & (filters.audio | filters.voice | filters.video))
 async def _telegram_file(client, message):
-  reply_msg = await message.reply('جارِ تحميل الفيديو وتفريغ الصوت بالإنجليزية...')
+  reply_msg = await message.reply('جارِ تحميل الفيديو وتفريغه...')
   file = await message.download(file_name=dl_path)
   
   try:
-    # 1. تفريغ الصوت الإنجليزي وترجمته للعربية مع استخراج ملف SRT
-    await reply_msg.edit_text('جارِ ترجمة النصوص إلى العربية وتوليد ملف SRT...')
+    await reply_msg.edit_text('جارِ استخراج النصوص وترجمتها باحترافية عبر ذكاء Gemini...')
     Srt_File = await whisper_transcribe_and_translate_srt(file)
     
-    # إرسال ملف الـ SRT العربي للمستخدم
-    await message.reply_document(Srt_File, caption="ملف الترجمة العربي المستخرج (SRT) ✅")
+    await message.reply_document(Srt_File, caption="ملف الترجمة العربي الاحترافي (SRT) ✅")
     
-    # 2. دمج الترجمة على الفيديو عبر FFmpeg
     if message.video or file.lower().endswith(Video_Forms):
-      await reply_msg.edit_text('جارِ دمج الترجمة العربية على الفيديو بخلفية مظللة وحجم خط 40...')
+      await reply_msg.edit_text('جارِ دمج الترجمة العربية بخط واضح عبر FFmpeg...')
       final_video = await burn_subtitles_ffmpeg(file, Srt_File)
       
       await reply_msg.edit_text('جارِ رفع الفيديو المترجم...')
-      await message.reply_video(final_video, caption="الفيديو المترجم جاهز ✅")
+      await message.reply_video(final_video, caption="الفيديو المترجم بالعربية عبر Gemini جاهز ✅")
       
       if os.path.exists(final_video):
         os.remove(final_video)
@@ -131,19 +267,28 @@ async def _telegram_file(client, message):
       os.remove(Srt_File)
       
   except Exception as e:
-    await reply_msg.edit_text(f'حدث خطأ أثناء المعالجة: {str(e)}')
+    err_text = str(e)[:3000]
+    try:
+      await reply_msg.edit_text(f'حدث خطأ أثناء المعالجة:\n`{err_text}`')
+    except Exception:
+      await message.reply(f'حدث خطأ أثناء المعالجة:\n`{err_text}`')
   
   if os.path.exists(file):
     os.remove(file)
 
-def main():
+async def start_bot_async():
+    await validate_and_filter_keys_async()
+    
     if not os.path.exists(dl_path): os.makedirs(dl_path)
     try:
-        bot.start()
-        print("✅ Whisper + Translator Bot is ONLINE!")
-        idle()
+        await bot.start()
+        if Admin_Id:
+            await bot.send_message(Admin_Id, 'Started ✅')
+        print(f"✅ Whisper + Gemini Async Subtitles Bot is ONLINE!")
+        await idle()
     finally:
         if bot.is_connected:
-           bot.stop()
+            await bot.stop()
 
-main()
+if __name__ == '__main__':
+    asyncio.run(start_bot_async())

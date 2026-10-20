@@ -1,4 +1,6 @@
 pyrogram
 tgcrypto
 faster-whisper
-deep-translator
+google-genai
+nest_asyncio
+av<19
