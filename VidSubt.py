@@ -220,7 +220,7 @@ async def burn_subtitles_ffmpeg(video_file, srt_file):
   safe_font_path = font_path.replace('\\', '/').replace(':', '\\\\:')
 
   ffmpeg_cmd = (
-    f'ffmpeg -i "{video_file}" -vf "subtitles=\'{safe_srt_path}\':force_style=\'Fontfile={safe_font_path},FontSize={font_size},PrimaryColour=&H00FFFFFF,BackColour=&H80000000,BorderStyle=4,MarginV=25,Encoding=1\'" '
+    f'ffmpeg -i "{video_file}" -vf "subtitles=\'{safe_srt_path}\':force_style=\'Fontfile={safe_font_path},FontSize={font_size},PrimaryColour=&H00FFFFFF,BackColour=&H00000000,BorderStyle=4,MarginV=25,Encoding=1\'" '
     f'-c:a copy "{output_video}" -y'
   )
   
