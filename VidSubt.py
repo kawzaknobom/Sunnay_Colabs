@@ -22,7 +22,7 @@ from faster_whisper import WhisperModel
 from google import genai
 
 # اسم النموذج المستقر للترجمة السريعة
-GEMINI_MODEL_NAME = 'gemini-2.5-flash'
+GEMINI_MODEL_NAME = 'gemini-2.5-flash-lite'
 
 # جلب جميع التوكنات المفصولة بمسافة " " من متغير البيئة
 gemini_keys_env = os.getenv('GEMINI_API_KEYS') or os.getenv('GEMINI_API_KEY') or ''
