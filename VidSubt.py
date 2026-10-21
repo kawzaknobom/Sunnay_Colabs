@@ -5,11 +5,6 @@ nest_asyncio.apply()
 
 Bot_Token = os.getenv('TOKEN')
 
-if Bot_Token == '5623514771:AAEUXl-8JzuhWhRoQBujXQRALoSKYVbqHDA':
-   Admin_Id = 7007648648
-else :
-   Admin_Id = None
-
 ########################################################
 
 from pyrogram.types import InlineKeyboardMarkup , InlineKeyboardButton , CallbackQuery , ForceReply, Message
@@ -112,16 +107,18 @@ def wrap_arabic_text(text, width=38):
   lines = textwrap.wrap(text, width=width)
   return "\n".join(lines)
 
-async def get_video_height(video_file):
+async def get_video_dimensions(video_file):
+  """جلب عرض وارتفاع الفيديو بدقة باستخدام ffprobe"""
   try:
-    cmd = f'ffprobe -v error -select_streams v:0 -show_entries stream=height -of json "{video_file}"'
+    cmd = f'ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of json "{video_file}"'
     stdout, _ = await run_command(cmd)
     data = json.loads(stdout)
+    width = data['streams'][0]['width']
     height = data['streams'][0]['height']
-    return int(height)
+    return int(width), int(height)
   except Exception as e:
-    print(f"Error getting video height: {e}")
-    return 720
+    print(f"Error getting video dimensions: {e}")
+    return 1080, 1920
 
 async def translate_srt_with_gemini(srt_file_path):
   if not VALID_GEMINI_KEYS:
@@ -189,7 +186,7 @@ async def whisper_transcribe_and_translate_srt(media_file):
     end_str = format_time(segment.end)
     text_en = segment.text.strip()
     
-    wrapped_text = wrap_arabic_text(text_en, width=38) if text_en else ""
+    wrapped_text = wrap_arabic_text(text_en, width=35) if text_en else ""
     srt_content += f"{i}\n{start_str} --> {end_str}\n{wrapped_text}\n\n"
     
   with open(Srt_File, 'w', encoding='utf-8') as f:
@@ -207,20 +204,32 @@ async def burn_subtitles_ffmpeg(video_file, srt_file):
   base_name = video_file.split('/')[-1].split('.')[0]
   output_video = mainDir + base_name + '_subtitled.mp4'
   
-  height = await get_video_height(video_file)
-  font_size = max(18, min(34, int(height * 0.042)))
+  width, height = await get_video_dimensions(video_file)
+  
+  # التمييز بين الفيديو الطولي (Vertical/Portrait) والفيديو العرضي (Landscape)
+  is_portrait = height > width
+  
+  if is_portrait:
+    # للفيديوهات الطولية (Reels / Shorts): خط مناسب غير ضخم والهامش السفلي معتدل
+    font_size = max(22, min(42, int(width * 0.048)))
+    margin_v = int(height * 0.06)  # رفعها قليلاً عن الأسفل لتجنب أزرار المنصات
+  else:
+    # للفيديوهات العرضية (Landscape): خط متوازن وواضح
+    font_size = max(20, min(36, int(height * 0.045)))
+    margin_v = 30
   
   safe_srt_path = srt_file.replace('\\', '/').replace(':', '\\\\:')
   
-  # تحديد مسار خط يدعم العربية صراحة لتجنب ظهور المربعات الفارغة
+  # مسار خط يدعم العربية
   font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
   if not os.path.exists(font_path):
     font_path = "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf"
   
   safe_font_path = font_path.replace('\\', '/').replace(':', '\\\\:')
 
+  # استخدام BorderStyle=3 أو خلفية شفافة/سوداء حسب الرغبة (BorderStyle=4 يخلق خلفية مستطيلة واضحة)
   ffmpeg_cmd = (
-    f'ffmpeg -i "{video_file}" -vf "subtitles=\'{safe_srt_path}\':force_style=\'Fontfile={safe_font_path},FontSize={font_size},PrimaryColour=&H00FFFFFF,BackColour=&H00000000,BorderStyle=4,MarginV=25,Encoding=1\'" '
+    f'ffmpeg -i "{video_file}" -vf "subtitles=\'{safe_srt_path}\':force_style=\'Fontfile={safe_font_path},FontSize={font_size},PrimaryColour=&H00FFFFFF,BackColour=&H80000000,BorderStyle=4,MarginV={margin_v},Alignment=2,Encoding=1\'" '
     f'-c:a copy "{output_video}" -y'
   )
   
@@ -252,11 +261,11 @@ async def _telegram_file(client, message):
     await message.reply_document(Srt_File, caption="ملف الترجمة العربي الاحترافي (SRT) ✅")
     
     if message.video or file.lower().endswith(Video_Forms):
-      await reply_msg.edit_text('جارِ دمج الترجمة العربية بخط واضح عبر FFmpeg...')
+      await reply_msg.edit_text('جارِ ضبط أبعاد الترجمة ودمجها مع الفيديو تلقائياً عبر FFmpeg...')
       final_video = await burn_subtitles_ffmpeg(file, Srt_File)
       
       await reply_msg.edit_text('جارِ رفع الفيديو المترجم...')
-      await message.reply_video(final_video, caption="الفيديو المترجم بالعربية عبر Gemini جاهز ✅")
+      await message.reply_video(final_video, caption="الفيديو المترجم بالعربية مع الضبط التلقائي للأبعاد جاهز ✅")
       
       if os.path.exists(final_video):
         os.remove(final_video)
@@ -282,8 +291,6 @@ async def start_bot_async():
     if not os.path.exists(dl_path): os.makedirs(dl_path)
     try:
         await bot.start()
-        if Admin_Id:
-            await bot.send_message(Admin_Id, 'Started ✅')
         print(f"✅ Whisper + Gemini Async Subtitles Bot is ONLINE!")
         await idle()
     finally:
