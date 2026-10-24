@@ -3,5 +3,6 @@ tgcrypto
 librosa
 soundfile
 numpy
-scikit-learn torch
+scikit-learn
+torch
 nest_asyncio
