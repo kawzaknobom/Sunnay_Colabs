@@ -6,7 +6,7 @@ import os
 
 BOT_TOKEN = os.getenv('TOKEN')
 PITCH_LIMIT = int(os.getenv('PITCH_LIMIT'))
-RES_PITCH = float(os.getenv('PITCH_LIMIT'))
+RES_PITCH = float(os.getenv('RES_PITCH'))
 
 
 ########################################################
