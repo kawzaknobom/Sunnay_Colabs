@@ -3,3 +3,7 @@ tgcrypto
 librosa
 soundfile
 nest_asyncio
+pyannote.audio
+torch
+torchvision
+torchaudio
