@@ -1,9 +1,5 @@
 pyrogram
-tgcrypto
 librosa
 soundfile
+numpy
 nest_asyncio
-pyannote.audio
-torch
-torchvision
-torchaudio

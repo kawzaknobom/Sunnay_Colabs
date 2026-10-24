@@ -4,10 +4,10 @@ import os
 
 #########################################################
 
-Bot_Token = os.getenv('TOKEN')
-HUGGINGFACE_TOKEN = os.getenv('HUGGINGFACE_TOKEN')
-########################################################
+BOT_TOKEN = os.getenv('TOKEN')
 
+########################################################
+import os
 import asyncio
 import subprocess
 from pyrogram import Client, filters
@@ -15,95 +15,74 @@ from pyrogram.types import Message
 import librosa
 import soundfile as sf
 import numpy as np
-from pyannote.audio import Pipeline
 
 # إعدادات البوت
-API_ID = 15952578          
-API_HASH = "3600ce5f8f9b9e18cba0f318fa0e3600"  
-
-# أدخل هنا توكن Hugging Face الخاص بك (مطلوبة لتشغيل نموذج pyannote)
+API_ID = 15952578
+API_HASH = '3600ce5f8f9b9e18cba0f318fa0e3600'
 
 app = Client("VoiceChangerBot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
-def process_audio_with_diarization(input_audio_path, output_audio_path):
+def process_audio_smart_chunks(input_audio_path, output_audio_path):
     try:
-        # 1. تحميل نموذج Diarization من pyannote لتحديد أوقات المتحدثين
-        pipeline = Pipeline.from_pretrained(
-            "pyannote/speaker-diarization-3.1",
-            use_auth_token=HUGGINGFACE_TOKEN
-        )
-        
-        # تطبيق التحليل على الملف الصوتي
-        diarization = pipeline(input_audio_path)
-        
-        # تحميل الملف الصوتي كاملاً للتعامل معه كمصفوفة
+        # 1. تحميل الملف الصوتي
         y, sr = librosa.load(input_audio_path, sr=None)
         
-        # قائمة لتخزين الفترات التي تحتاج لتعديل (الإناث)
-        # سنقوم بفحص كل متحدث وتحديد جنسه بناءً على متوسط طبقة الصوت لديه
-        speaker_genders = {}
+        # تقسيم الصوت إلى شرائح زمنية قصيرة (كل 1.5 ثانية) لضمان فصل المتحدثين المختلفين
+        chunk_duration = 1.5 
+        chunk_samples = int(chunk_duration * sr)
+        processed_chunks = []
         
-        # سنمر على الفترات الزمنية لتحديد الجنس لكل متحدث أولاً
-        for turn, _, speaker in diarization.itertracks(yield_label=True):
-            if speaker not in speaker_genders:
-                start_sample = int(turn.start * sr)
-                end_sample = int(turn.end * sr)
-                segment = y[start_sample:end_sample]
+        for i in range(0, len(y), chunk_samples):
+            chunk = y[i:i + chunk_samples]
+            if len(chunk) < sr * 0.1:  # إهمال الأجزاء القصيرة جداً في النهاية
+                processed_chunks.append(chunk)
+                continue
                 
-                if len(segment) > sr * 0.5: # أخذ عينة لا تقل عن نصف ثانية
-                    pitches, _ = librosa.piptrack(y=segment, sr=sr)
-                    valid_pitches = pitches[pitches > 0]
-                    mean_pitch = np.mean(valid_pitches) if len(valid_pitches) > 0 else 200
-                    
-                    # إذا كان متوسط التردد يقع في نطاق صوت الأنثى
-                    speaker_genders[speaker] = "female" if mean_pitch > 160 else "male"
-                else:
-                    speaker_genders[speaker] = "male" # افتراضي للمقاطع القصيرة جداً
-
-        # 2. إنشاء نسخة معدلة من الصوت
-        y_modified = y.copy()
-        
-        for turn, _, speaker in diarization.itertracks(yield_label=True):
-            if speaker_genders.get(speaker) == "female":
-                start_sample = int(turn.start * sr)
-                end_sample = int(turn.end * sr)
-                segment = y[start_sample:end_sample]
+            # حساب طبقة الصوت (Pitch) لهذه الشريحة فقط
+            pitches, magnitudes = librosa.piptrack(y=chunk, sr=sr)
+            valid_pitches = pitches[pitches > 0]
+            
+            chunk_pitch_mean = np.mean(valid_pitches) if len(valid_pitches) > 0 else 0
+            
+            # نطاق ترددات الأصوات النسائية البشرية الطبيعية
+            is_female_voice = 165 < chunk_pitch_mean < 350
+            
+            if is_female_voice:
+                # خفض طبقة الصوت للمقطع النسائي فقط لجعله يبدو أخشونة أو أقرب لصوت ذكر
+                modified_chunk = librosa.effects.pitch_shift(chunk, sr=sr, n_steps=-4.0)
+                processed_chunks.append(modified_chunk)
+            else:
+                # ترك أصوات الذكور أو الأصوات الأخرى كما هي بدون تعديل
+                processed_chunks.append(chunk)
                 
-                if len(segment) > 0:
-                    # تعديل طبقة الصوت (Pitch Shifting) للمقاطع النسائية فقط
-                    modified_segment = librosa.effects.pitch_shift(segment, sr=sr, n_steps=-4.0)
-                    
-                    # التأكد من مطابقة الحجم لعدم حدوث أخطاء في الاندماج
-                    if len(modified_segment) == len(segment):
-                        y_modified[start_sample:end_sample] = modified_segment
-
-        # حفظ الملف النهائي المعدل
-        sf.write(output_audio_path, y_modified, sr)
+        # دمج جميع الشرائح معاً
+        y_final = np.concatenate(processed_chunks)
+        sf.write(output_audio_path, y_final, sr)
         return True
         
     except Exception as e:
-        print(f"خطأ في معالجة Diarization: {e}")
+        print(f"خطأ في معالجة الصوت: {e}")
         return False
 
-def process_video_with_pyannote(input_video_path, output_video_path):
+def process_video_file(input_video_path, output_video_path):
     pid = os.getpid()
     temp_audio = f"temp_audio_{pid}.wav"
     processed_audio = f"processed_audio_{pid}.wav"
     
     try:
-        # استخراج الصوت من الفيديو
+        # استخراج الصوت من الفيديو عبر FFmpeg
         extract_cmd = [
             "ffmpeg", "-y", "-i", input_video_path, 
-            "-vn", "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1", temp_audio
+            "-vn", "-acodec", "pcm_s16le", "-ar", "44100", "-ac", "2", temp_audio
         ]
         subprocess.run(extract_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
         
-        # معالجة الصوت باستخدام Pyannote وتغيير أصوات الإناث فقط
-        success = process_audio_with_diarization(temp_audio, processed_audio)
+        # معالجة الصوت بالتحليل الذكي للشرائح
+        success = process_audio_smart_chunks(temp_audio, processed_audio)
         if not success or not os.path.exists(processed_audio):
             return False
             
-        # دمج الفيديو الأصلي مع الصوت الجديد المعدل
+        # دمج الفيديو الأصلي مع الصوت الجديد المعدل بدون إعادة ضغط الفيديو (سريع جداً)
         merge_cmd = [
             "ffmpeg", "-y", 
             "-i", input_video_path,     
@@ -130,7 +109,7 @@ def process_video_with_pyannote(input_video_path, output_video_path):
 
 @app.on_message(filters.command("start"))
 async def start_command(client, message: Message):
-    await message.reply_text("🤖 أهلاً بك! البوت الآن مفعّل بنظام (Pyannote Diarization) لفصل المتحدثين بدقة وتعديل الإناث فقط.")
+    await message.reply_text("🤖 أهلاً بك! البوت جاهز الآن لمعالجة الفيديوهات والصوتيات محلياً بدون أي قيود أو توكنات.")
 
 @app.on_message(filters.audio | filters.voice | filters.video | filters.document)
 async def handle_media(client, message: Message):
@@ -140,7 +119,7 @@ async def handle_media(client, message: Message):
 
     is_video = bool(message.video or (message.document and message.document.mime_type and "video" in message.document.mime_type))
     
-    processing_msg = await message.reply_text("⏳ جاري تحليل المتحدثين وفصل الأصوات بدقة عالية، قد يستغرق ذلك وقتاً أطول...")
+    processing_msg = await message.reply_text("⏳ جاري تحليل وتعديل الأصوات محلياً...")
 
     input_file = await message.download()
     output_file = f"processed_{message.chat.id}.mp4" if is_video else f"processed_{message.chat.id}.wav"
@@ -149,15 +128,15 @@ async def handle_media(client, message: Message):
         loop = asyncio.get_running_loop()
         
         if is_video:
-            success = await loop.run_in_executor(None, process_video_with_pyannote, input_file, output_file)
+            success = await loop.run_in_executor(None, process_video_file, input_file, output_file)
             if success and os.path.exists(output_file) and os.path.getsize(output_file) > 0:
-                await message.reply_video(video=output_file, caption="✅ تم التعرف على المتحدثين وتعديل أصوات الإناث بدقة داخل الفيديو!")
+                await message.reply_video(video=output_file, caption="✅ تم تعديل الأصوات النسائية داخل الفيديو بنجاح!")
             else:
                 await message.reply_text("❌ حدث خطأ أثناء المعالجة.")
         else:
-            success = await loop.run_in_executor(None, process_audio_with_diarization, input_file, output_file)
+            success = await loop.run_in_executor(None, process_audio_smart_chunks, input_file, output_file)
             if success and os.path.exists(output_file):
-                await message.reply_audio(audio=output_file, caption="✅ تم تعديل الملف الصوتي بدقة متناهية!")
+                await message.reply_audio(audio=output_file, caption="✅ تم تعديل الملف الصوتي بنجاح!")
             else:
                 await message.reply_text("❌ حدث خطأ أثناء معالجة الصوت.")
 
