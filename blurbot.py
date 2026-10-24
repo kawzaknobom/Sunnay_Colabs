@@ -79,10 +79,10 @@ async def Get_Msg(bot,Chat_id,msg_id):
 async def get_seconds(clock_time) :
     splitted = clock_time.split(':')
     if len(splitted) == 3 : 
-      hours, minutes, seconds = map(int, clock_time.split(':'))
+      hours, minutes, seconds = map(float, clock_time.split(':'))
     elif len(splitted) == 2 : 
-      minutes = int(splitted[0])
-      seconds = int(splitted[-1])
+      minutes = float(splitted[0])
+      seconds = float(splitted[-1])
       hours = 0
     total_seconds = (hours * 3600) + (minutes * 60) + seconds
     return total_seconds
