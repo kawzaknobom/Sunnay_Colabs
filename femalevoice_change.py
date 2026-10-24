@@ -16,9 +16,8 @@ import librosa
 import soundfile as sf
 
 # إعدادات البوت
-API_ID = 12345678          # ضع الـ API ID هنا
-API_HASH = "your_api_hash"  # ضع الـ API Hash هنا
-BOT_TOKEN = "your_bot_token" # ضع توكن البوت هنا
+API_ID = 15952578          # ضع الـ API ID هنا
+API_HASH = "3600ce5f8f9b9e18cba0f318fa0e3600"  # ضع الـ API Hash هنا
 
 app = Client("VoiceChangerBot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
