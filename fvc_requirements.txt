@@ -3,6 +3,7 @@ tgcrypto
 librosa
 soundfile
 numpy
+simple-diarizer
 scikit-learn
 torch
 nest_asyncio
