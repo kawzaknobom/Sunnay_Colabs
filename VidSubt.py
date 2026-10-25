@@ -18,7 +18,8 @@ from pyrogram.errors import FloodWait, MessageTooLong
 from pyrogram import idle
 
 os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
-from faster_whisper import WhisperModel
+import torch
+import whisperx
 from google import genai
 
 # اسم النموذج المستقر للترجمة السريعة
@@ -176,21 +177,37 @@ async def translate_srt_with_gemini(srt_file_path):
 
   return srt_file_path
 
-async def whisper_transcribe_and_translate_srt(media_file):
+def run_whisperx_pipeline(audio_file):
+  """دالة مساعدة لتشغيل WhisperX في خلفية منفصلة لمنع حجب المعالج (Blocking)"""
+  device = "cuda" if torch.cuda.is_available() else "cpu"
+  compute_type = "int8" if device == "cuda" else "float32"
+  
+  # 1. تفريغ الصوت باستخدام نموذج Whisper الأساسي
+  model = whisperx.load_model("large-v3", device, compute_type=compute_type)
+  audio = whisperx.load_audio(audio_file)
+  result = model.transcribe(audio, batch_size=16)
+  
+  # 2. خطوة المحاذاة القسرية (Alignment) لضبط التوقيتات بدقة شديدة بالمللي-ثانية
+  model_a, metadata = whisperx.load_align_model(language_code=result["language"], device=device)
+  result = whisperx.align(result["segments"], model_a, metadata, audio, device, return_char_alignments=False)
+  
+  return result
+
+async def whisperx_transcribe_and_translate_srt(media_file):
   mainDir = '/'.join(media_file.split('/')[:-1]) + '/'
   base_name = media_file.split('/')[-1].split('.')[0]
   Srt_File = mainDir + base_name + '_AR.srt'
   
   audio_file = await Mp3_Conv(media_file)
   
-  model = WhisperModel("large-v3", device="cuda", compute_type="int8")
-  segments, info = model.transcribe(audio_file, beam_size=5, vad_filter=True)
+  # تشغيل معالجة WhisperX في Thread منفصل
+  result = await asyncio.to_thread(run_whisperx_pipeline, audio_file)
   
   srt_content = ""
-  for i, segment in enumerate(segments, start=1):
-    start_str = format_time(segment.start)
-    end_str = format_time(segment.end)
-    text_en = segment.text.strip()
+  for i, segment in enumerate(result["segments"], start=1):
+    start_str = format_time(segment.get("start", 0.0))
+    end_str = format_time(segment.get("end", 0.0))
+    text_en = segment.get("text", "").strip()
     
     wrapped_text = wrap_arabic_text(text_en, width=65) if text_en else ""
     srt_content += f"{i}\n{start_str} --> {end_str}\n{wrapped_text}\n\n"
@@ -216,11 +233,9 @@ async def burn_subtitles_ffmpeg(video_file, srt_file):
   is_portrait = height > width
   
   if is_portrait:
-    # الفيديوهات الطولية (Shorts / Reels): خط صغير ومرتب وصندوق أسود صلب مناسب
     font_size = max(14, min(20, int(width * 0.026)))
     margin_v = int(height * 0.05)
   else:
-    # الفيديوهات العرضية (Landscape): زيادة حجم الخط بناءً على عرض الشاشة ليكون واضحاً ومناسباً جداً
     font_size = max(24, min(42, int(width * 0.028)))
     margin_v = int(height * 0.06)
   
@@ -232,7 +247,6 @@ async def burn_subtitles_ffmpeg(video_file, srt_file):
   
   safe_font_path = font_path.replace('\\', '/').replace(':', '\\\\:')
 
-  # خلفية سوداء صلبة تماماً عبر BorderStyle=4 و BackColour=&H00000000
   ffmpeg_cmd = (
     f'ffmpeg -i "{video_file}" -vf "subtitles=\'{safe_srt_path}\':force_style=\'Fontfile={safe_font_path},FontSize={font_size},PrimaryColour=&H00FFFFFF,BackColour=&H00000000,BorderStyle=4,MarginV={margin_v},Alignment=2,Encoding=1\'" '
     f'-c:a copy "{output_video}" -y'
@@ -256,12 +270,12 @@ async def command1(bot, message):
   
 @bot.on_message(filters.private & filters.incoming & (filters.audio | filters.voice | filters.video))
 async def _telegram_file(client, message):
-  reply_msg = await message.reply('جارِ تحميل الفيديو وتفريغه...')
+  reply_msg = await message.reply('جارِ تحميل الملف ومعالجته عبر WhisperX بدقة متناهية...')
   file = await message.download(file_name=dl_path)
   
   try:
-    await reply_msg.edit_text('جارِ استخراج النصوص وترجمتها باحترافية عبر ذكاء Gemini...')
-    Srt_File = await whisper_transcribe_and_translate_srt(file)
+    await reply_msg.edit_text('جارِ استخراج النصوص والمحاذاة الصوتية الدقيقة وترجمتها عبر Gemini...')
+    Srt_File = await whisperx_transcribe_and_translate_srt(file)
     
     await message.reply_document(Srt_File, caption="ملف الترجمة العربي الاحترافي (SRT) ✅")
     
@@ -270,12 +284,12 @@ async def _telegram_file(client, message):
       final_video = await burn_subtitles_ffmpeg(file, Srt_File)
       
       await reply_msg.edit_text('جارِ رفع الفيديو المترجم...')
-      await message.reply_video(final_video, caption="الفيديو المترجم بالعربية عبر Gemini جاهز ✅")
+      await message.reply_video(final_video, caption="الفيديو المترجم بالعربية عبر WhisperX + Gemini جاهز ✅")
       
       if os.path.exists(final_video):
         os.remove(final_video)
     else:
-      await reply_msg.edit_text('تم استخراج ملف الترجمة العربي بنجاح ✅')
+      await reply_msg.edit_text('تم استخراج ملف الترجمة العربي بدقة عالية بنجاح ✅')
       
     if os.path.exists(Srt_File):
       os.remove(Srt_File)
@@ -298,7 +312,7 @@ async def start_bot_async():
         await bot.start()
         if Admin_Id:
             await bot.send_message(Admin_Id, 'Started ✅')
-        print(f"✅ Whisper + Gemini Async Subtitles Bot is ONLINE!")
+        print(f"✅ WhisperX + Gemini Async Subtitles Bot is ONLINE!")
         await idle()
     finally:
         if bot.is_connected:
