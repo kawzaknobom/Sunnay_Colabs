@@ -1,6 +1,6 @@
 pyrogram
 tgcrypto
-faster-whisper
+whisperx
 google-genai
 nest_asyncio
 av<19
