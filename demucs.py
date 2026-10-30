@@ -4,11 +4,7 @@ nest_asyncio.apply()
 #########################################################
 
 Bot_Token = os.getenv('TOKEN')
-
-if Bot_Token == '5623514771:AAEUXl-8JzuhWhRoQBujXQRALoSKYVbqHDA':
-   Admin_Id = 7007648648
-else :
-   Admin_Id = None
+Admin_Id = int(os.getenv('Admin_Id','0'))
 
 ########################################################
 
@@ -250,8 +246,8 @@ def main():
     if not os.path.exists(Music_Rmv_Path): os.makedirs(Music_Rmv_Path)
     try:
         bot.start()
-        if Admin_Id :
-          bot.send_message(Admin_Id,'Started ✅')
+        if Admin_Id != 0 :
+           bot.send_message(Admin_Id, 'Started ✅')
         print("✅ Music Removal Bot is ONLINE!")
         idle()
     finally:

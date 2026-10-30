@@ -5,6 +5,7 @@ import os
 #########################################################
 
 Bot_Token = os.getenv('TOKEN')
+Admin_Id = int(os.getenv('Admin_Id','0'))
 
 ########################################################
 
@@ -104,6 +105,8 @@ async def _telegram_file(client, message):
 def main():
     try:
         bot.start()
+        if Admin_Id != 0 :
+          bot.send_message(Admin_Id, 'Started ✅')
         print("✅ OCR Bot is ONLINE!")
         idle()
     finally:
