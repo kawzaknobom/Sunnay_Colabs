@@ -1,4 +1,4 @@
-import nest_asyncio, os, json, textwrap, asyncio
+import nest_asyncio, os, json, textwrap, asyncio, gc, time, random
 nest_asyncio.apply()
 
 #########################################################
@@ -6,10 +6,9 @@ nest_asyncio.apply()
 Bot_Token = os.getenv('TOKEN')
 Admin_Id = int(os.getenv('Admin_Id','0'))
 
-
 ########################################################
 
-from pyrogram.types import InlineKeyboardMarkup , InlineKeyboardButton , CallbackQuery , ForceReply, Message
+from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, ForceReply, Message
 from pyrogram import Client, filters
 from pyrogram.errors import FloodWait, MessageTooLong
 from pyrogram import idle
@@ -28,6 +27,10 @@ raw_gemini_keys = [k.strip() for k in gemini_keys_env.split(' ') if k.strip()]
 
 VALID_GEMINI_KEYS = []
 current_key_index = 0
+
+# استخدام قائمة عامة (Global List) بدلاً من قاعدة البيانات لتنظيم الصف
+Global_Main_Queue = []
+Public_Loop = False
 
 def test_single_key(key):
     """دالة اختبار التوكن الواحدة بشكل منفصل"""
@@ -82,234 +85,282 @@ Audio_Forms = (".mp3", ".ogg", ".m4a", ".aac", ".flac", ".wav", ".wma", ".opus",
 Video_Forms = (".mp4", ".mkv", ".mov", ".avi", ".wmv", ".avchd", ".webm", ".flv")
 
 async def run_command(cmd):
-  proc = await asyncio.create_subprocess_shell(
-      cmd,
-      stdout=asyncio.subprocess.PIPE,
-      stderr=asyncio.subprocess.PIPE
-  )
-  stdout, stderr = await proc.communicate()
-  return stdout.decode(), stderr.decode()
+    proc = await asyncio.create_subprocess_shell(
+        cmd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE
+    )
+    stdout, stderr = await proc.communicate()
+    return stdout.decode(), stderr.decode()
 
 async def Mp3_Conv(File):
-  mainDir = '/'.join(File.split('/')[:-1]) + '/'
-  Mp3_File = mainDir + File.split('/')[-1].split('.')[0] + '_Conv.mp3'
-  Mp3_Cmd = f'ffmpeg -i "{File}" -q:a 0 -map a "{Mp3_File}" -y'
-  await run_command(Mp3_Cmd)
-  return Mp3_File
+    mainDir = '/'.join(File.split('/')[:-1]) + '/'
+    Mp3_File = mainDir + File.split('/')[-1].split('.')[0] + '_Conv.mp3'
+    Mp3_Cmd = f'ffmpeg -i "{File}" -q:a 0 -map a "{Mp3_File}" -y'
+    await run_command(Mp3_Cmd)
+    return Mp3_File
 
 def format_time(seconds):
-  hours = int(seconds // 3600)
-  minutes = int((seconds % 3600) // 60)
-  secs = int(seconds % 60)
-  milliseconds = int(int((seconds - int(seconds)) * 1000))
-  return f"{hours:02d}:{minutes:02d}:{secs:02d},{milliseconds:03d}"
+    hours = int(seconds // 3600)
+    minutes = int((seconds % 3600) // 60)
+    secs = int(seconds % 60)
+    milliseconds = int(int((seconds - int(seconds)) * 1000))
+    return f"{hours:02d}:{minutes:02d}:{secs:02d},{milliseconds:03d}"
 
 def wrap_arabic_text(text, width=65):
-  """توسيع عرض السطر ليبقى النص في سطر أو سطرين كحد أقصى لمنع تضخم الصندوق الأسود"""
-  if not text:
-    return ""
-  lines = textwrap.wrap(text, width=width)
-  return "\n".join(lines)
+    if not text:
+        return ""
+    lines = textwrap.wrap(text, width=width)
+    return "\n".join(lines)
 
 async def get_video_dimensions(video_file):
-  """جلب عرض وارتفاع الفيديو بدقة باستخدام ffprobe"""
-  try:
-    cmd = f'ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of json "{video_file}"'
-    stdout, _ = await run_command(cmd)
-    data = json.loads(stdout)
-    width = data['streams'][0]['width']
-    height = data['streams'][0]['height']
-    return int(width), int(height)
-  except Exception as e:
-    print(f"Error getting video dimensions: {e}")
-    return 1080, 1920
+    try:
+        cmd = f'ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of json "{video_file}"'
+        stdout, _ = await run_command(cmd)
+        data = json.loads(stdout)
+        width = data['streams'][0]['width']
+        height = data['streams'][0]['height']
+        return int(width), int(height)
+    except Exception as e:
+        print(f"Error getting video dimensions: {e}")
+        return 1080, 1920
 
 async def translate_srt_with_gemini(srt_file_path):
-  if not VALID_GEMINI_KEYS:
-    raise ValueError("❌ لا توجد أي توكنات صالحة لجمناي متروكة بعد الفحص!")
+    if not VALID_GEMINI_KEYS:
+        raise ValueError("❌ لا توجد أي توكنات صالحة لجمناي متروكة بعد الفحص!")
 
-  with open(srt_file_path, 'r', encoding='utf-8') as f:
-    srt_content = f.read()
+    with open(srt_file_path, 'r', encoding='utf-8') as f:
+        srt_content = f.read()
 
-  prompt = (
-    "You are a professional subtitle translator. Translate the following SRT subtitle content from English to Arabic. "
-    "Strictly adhere to these rules:\n"
-    "1. Keep the exact SRT format, subtitle index numbers, and timecodes (e.g., 00:00:01,000 --> 00:00:04,000) completely unchanged.\n"
-    "2. Translate ONLY the English text spoken in the subtitles into natural, accurate, and fluent Arabic suitable for video subtitles.\n"
-    "3. Do not add any extra explanations, notes, or markdown formatting outside the SRT structure. Return only the valid translated SRT content.\n\n"
-    f"{srt_content}"
-  )
+    prompt = (
+        "You are a professional subtitle translator. Translate the following SRT subtitle content from English to Arabic. "
+        "Strictly adhere to these rules:\n"
+        "1. Keep the exact SRT format, subtitle index numbers, and timecodes (e.g., 00:00:01,000 --> 00:00:04,000) completely unchanged.\n"
+        "2. Translate ONLY the English text spoken in the subtitles into natural, accurate, and fluent Arabic suitable for video subtitles.\n"
+        "3. Do not add any extra explanations, notes, or markdown formatting outside the SRT structure. Return only the valid translated SRT content.\n\n"
+        f"{srt_content}"
+    )
 
-  translated_text = None
-  max_attempts = len(VALID_GEMINI_KEYS)
+    translated_text = None
+    max_attempts = len(VALID_GEMINI_KEYS)
 
-  for attempt in range(max_attempts):
-    try:
-      client = get_next_valid_client()
-      response = await asyncio.to_thread(
-          client.models.generate_content,
-          model=GEMINI_MODEL_NAME,
-          contents=prompt,
-      )
-      
-      if response and response.text:
-        translated_text = response.text.strip()
-        if translated_text.startswith("```"):
-          lines = translated_text.splitlines()
-          if lines[0].startswith("```"):
-            lines = lines[1:]
-          if lines and lines[-1].startswith("```"):
-            lines = lines[:-1]
-          translated_text = "\n".join(lines).strip()
-        break 
-    except Exception as e:
-      print(f"⚠️ خطأ أثناء الترجمة بمحاولة {attempt + 1}: {e}")
-      continue
+    for attempt in range(max_attempts):
+        try:
+            client = get_next_valid_client()
+            response = await asyncio.to_thread(
+                client.models.generate_content,
+                model=GEMINI_MODEL_NAME,
+                contents=prompt,
+            )
+            
+            if response and response.text:
+                translated_text = response.text.strip()
+                if translated_text.startswith("```"):
+                    lines = translated_text.splitlines()
+                    if lines[0].startswith("```"):
+                        lines = lines[1:]
+                    if lines and lines[-1].startswith("```"):
+                        lines = lines[:-1]
+                    translated_text = "\n".join(lines).strip()
+                break 
+        except Exception as e:
+            print(f"⚠️ خطأ أثناء الترجمة بمحاولة {attempt + 1}: {e}")
+            continue
 
-  if not translated_text:
-    raise Exception("فشلت عملية الترجمة باستخدام التوكنات الصالحة.")
+    if not translated_text:
+        raise Exception("فشلت عملية الترجمة باستخدام التوكنات الصالحة.")
 
-  with open(srt_file_path, 'w', encoding='utf-8') as f:
-    f.write(translated_text)
+    with open(srt_file_path, 'w', encoding='utf-8') as f:
+        f.write(translated_text)
 
-  return srt_file_path
+    return srt_file_path
 
 def run_whisperx_pipeline(audio_file):
-  """دالة مساعدة لتشغيل WhisperX في خلفية منفصلة لمنع حجب المعالج (Blocking)"""
-  device = "cuda" if torch.cuda.is_available() else "cpu"
-  compute_type = "int8" if device == "cuda" else "float32"
-  
-  # 1. تفريغ الصوت باستخدام نموذج Whisper الأساسي
-  model = whisperx.load_model("large-v3", device, compute_type=compute_type)
-  audio = whisperx.load_audio(audio_file)
-  result = model.transcribe(audio, batch_size=16)
-  
-  # 2. خطوة المحاذاة القسرية (Alignment) لضبط التوقيتات بدقة شديدة بالمللي-ثانية
-  model_a, metadata = whisperx.load_align_model(language_code=result["language"], device=device)
-  result = whisperx.align(result["segments"], model_a, metadata, audio, device, return_char_alignments=False)
-  
-  return result
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    compute_type = "int8" if device == "cuda" else "float32"
+    
+    model = whisperx.load_model("large-v3", device, compute_type=compute_type)
+    audio = whisperx.load_audio(audio_file)
+    result = model.transcribe(audio, batch_size=16)
+    
+    model_a, metadata = whisperx.load_align_model(language_code=result["language"], device=device)
+    result = whisperx.align(result["segments"], model_a, metadata, audio, device, return_char_alignments=False)
+    
+    return result
 
 async def whisperx_transcribe_and_translate_srt(media_file):
-  mainDir = '/'.join(media_file.split('/')[:-1]) + '/'
-  base_name = media_file.split('/')[-1].split('.')[0]
-  Srt_File = mainDir + base_name + '_AR.srt'
-  
-  audio_file = await Mp3_Conv(media_file)
-  
-  # تشغيل معالجة WhisperX في Thread منفصل
-  result = await asyncio.to_thread(run_whisperx_pipeline, audio_file)
-  
-  srt_content = ""
-  for i, segment in enumerate(result["segments"], start=1):
-    start_str = format_time(segment.get("start", 0.0))
-    end_str = format_time(segment.get("end", 0.0))
-    text_en = segment.get("text", "").strip()
+    mainDir = '/'.join(media_file.split('/')[:-1]) + '/'
+    base_name = media_file.split('/')[-1].split('.')[0]
+    Srt_File = mainDir + base_name + '_AR.srt'
     
-    wrapped_text = wrap_arabic_text(text_en, width=65) if text_en else ""
-    srt_content += f"{i}\n{start_str} --> {end_str}\n{wrapped_text}\n\n"
+    audio_file = await Mp3_Conv(media_file)
+    result = await asyncio.to_thread(run_whisperx_pipeline, audio_file)
     
-  with open(Srt_File, 'w', encoding='utf-8') as f:
-    f.write(srt_content)
-    
-  if os.path.exists(audio_file):
-    os.remove(audio_file)
-    
-  await translate_srt_with_gemini(Srt_File)
-  
-  return Srt_File
+    srt_content = ""
+    for i, segment in enumerate(result["segments"], start=1):
+        start_str = format_time(segment.get("start", 0.0))
+        end_str = format_time(segment.get("end", 0.0))
+        text_en = segment.get("text", "").strip()
+        
+        wrapped_text = wrap_arabic_text(text_en, width=65) if text_en else ""
+        srt_content += f"{i}\n{start_str} --> {end_str}\n{wrapped_text}\n\n"
+        
+    with open(Srt_File, 'w', encoding='utf-8') as f:
+        f.write(srt_content)
+        
+    if os.path.exists(audio_file):
+        os.remove(audio_file)
+        
+    await translate_srt_with_gemini(Srt_File)
+    return Srt_File
 
 async def burn_subtitles_ffmpeg(video_file, srt_file):
-  mainDir = '/'.join(video_file.split('/')[:-1]) + '/'
-  base_name = video_file.split('/')[-1].split('.')[0]
-  output_video = mainDir + base_name + '_subtitled.mp4'
-  
-  width, height = await get_video_dimensions(video_file)
-  
-  # التمييز بين الفيديو الطولي والفيديو العرضي
-  is_portrait = height > width
-  
-  if is_portrait:
-    font_size = max(14, min(20, int(width * 0.026)))
-    margin_v = int(height * 0.05)
-  else:
-    font_size = max(24, min(42, int(width * 0.028)))
-    margin_v = int(height * 0.06)
-  
-  safe_srt_path = srt_file.replace('\\', '/').replace(':', '\\\\:')
-  
-  font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
-  if not os.path.exists(font_path):
-    font_path = "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf"
-  
-  safe_font_path = font_path.replace('\\', '/').replace(':', '\\\\:')
+    mainDir = '/'.join(video_file.split('/')[:-1]) + '/'
+    base_name = video_file.split('/')[-1].split('.')[0]
+    output_video = mainDir + base_name + '_subtitled.mp4'
+    
+    width, height = await get_video_dimensions(video_file)
+    is_portrait = height > width
+    
+    if is_portrait:
+        font_size = max(14, min(20, int(width * 0.026)))
+        margin_v = int(height * 0.05)
+    else:
+        font_size = max(24, min(42, int(width * 0.028)))
+        margin_v = int(height * 0.06)
+    
+    safe_srt_path = srt_file.replace('\\', '/').replace(':', '\\\\:')
+    
+    font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+    if not os.path.exists(font_path):
+        font_path = "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf"
+    
+    safe_font_path = font_path.replace('\\', '/').replace(':', '\\\\:')
 
-  ffmpeg_cmd = (
-    f'ffmpeg -i "{video_file}" -vf "subtitles=\'{safe_srt_path}\':force_style=\'Fontfile={safe_font_path},FontSize={font_size},PrimaryColour=&H00FFFFFF,BackColour=&H00000000,BorderStyle=4,MarginV={margin_v},Alignment=2,Encoding=1\'" '
-    f'-c:a copy "{output_video}" -y'
-  )
-  
-  await run_command(ffmpeg_cmd)
-  return output_video
+    ffmpeg_cmd = (
+        f'ffmpeg -i "{video_file}" -vf "subtitles=\'{safe_srt_path}\':force_style=\'Fontfile={safe_font_path},FontSize={font_size},PrimaryColour=&H00FFFFFF,BackColour=&H00000000,BorderStyle=4,MarginV={margin_v},Alignment=2,Encoding=1\'" '
+        f'-c:a copy "{output_video}" -y'
+    )
+    
+    await run_command(ffmpeg_cmd)
+    return output_video
 
 def Pyrogram_Client(Bot_Token):
-  Bot_Identifier = Bot_Token.split(':')[0]
-  Session_file = Bot_Identifier + '_955hyh95|session_prm_bot'
-  bot = Client(Session_file, api_id=Api_Id, api_hash=Api_Hash, bot_token=Bot_Token, in_memory=True)
-  return bot, Bot_Identifier
+    Bot_Identifier = Bot_Token.split(':')[0]
+    Session_file = Bot_Identifier + '_955hyh95|session_prm_bot'
+    bot = Client(Session_file, api_id=Api_Id, api_hash=Api_Hash, bot_token=Bot_Token, in_memory=True)
+    return bot, Bot_Identifier
 
 bot, Bot_Identifier = Pyrogram_Client(Bot_Token)
 dl_path = f'./downloads_{Bot_Identifier}/'
 
+# ==================== نظام الـ Global List Loop ==================== #
+
+def Item_add(Item):
+    """إضافة عنصر جديد للقائمة العامة وتشغيل حلقة المعالجة إذا كانت متوقفة"""
+    global Global_Main_Queue, Public_Loop
+    Global_Main_Queue.append(Item)
+    if not Public_Loop:
+        Public_Loop = True
+        asyncio.create_task(Multi_loop_async())
+
+async def Multi_loop_async():
+    """حلقة المعالجة المستمرة لمدخلات القائمة العامة في الذاكرة"""
+    global Global_Main_Queue, Public_Loop
+    Public_Loop = True
+
+    while len(Global_Main_Queue) > 0:
+        # تحديث أرقام الترتيب للمستخدمين الموجودين في قائمة الانتظار
+        for elem in range(1, len(Global_Main_Queue)):
+            try:
+                A_Reply_List = Global_Main_Queue[elem].split('_')
+                A_rp_msg_id = int(A_Reply_List[-2])
+                A_user_id = int(A_Reply_List[-1])
+                A_reply = await bot.get_messages(A_user_id, A_rp_msg_id)
+                await A_reply.edit_text(f"تمت الإضافة للصف \n\n ترتيبك هو {elem} ☕ ")
+            except Exception:
+                pass
+
+        C_Process = Global_Main_Queue[0]
+        msg_list = C_Process.split('_')
+        msg_id = int(msg_list[1])
+        rp_msg_id = int(msg_list[-2])
+        user_id = int(msg_list[-1])
+
+        reply_msg = await bot.get_messages(user_id, rp_msg_id)
+        File_Msg = await bot.get_messages(user_id, msg_id)
+
+        try:
+            try:
+                await reply_msg.edit_text("جارِ العمل على الملف الآن ☕...")
+            except Exception:
+                reply_msg = await File_Msg.reply("جارِ العمل ☕", reply_to_message_id=File_Msg.id)
+
+            task_dl_path = f'./downloads_{msg_id}_{Bot_Identifier}/'
+            if not os.path.exists(task_dl_path):
+                os.makedirs(task_dl_path)
+
+            file = await File_Msg.download(file_name=task_dl_path)
+
+            await reply_msg.edit_text('جارِ استخراج النصوص والمحاذاة الصوتية وترجمتها عبر Gemini...')
+            Srt_File = await whisperx_transcribe_and_translate_srt(file)
+            await File_Msg.reply_document(Srt_File, caption="ملف الترجمة العربي الاحترافي (SRT) ✅")
+
+            if File_Msg.video or file.lower().endswith(Video_Forms):
+                await reply_msg.edit_text('جارِ دمج الترجمة بخلفية سوداء عبر FFmpeg...')
+                final_video = await burn_subtitles_ffmpeg(file, Srt_File)
+
+                await reply_msg.edit_text('جارِ رفع الفيديو المترجم...')
+                await File_Msg.reply_video(final_video, caption="الفيديو المترجم بالعربية عبر WhisperX + Gemini جاهز ✅")
+
+                if os.path.exists(final_video):
+                    os.remove(final_video)
+
+            await reply_msg.edit_text('تمت العملية بنجاح ☑️')
+
+            if os.path.exists(Srt_File):
+                os.remove(Srt_File)
+            if os.path.exists(file):
+                os.remove(file)
+
+        except Exception as err:
+            err_text = str(err)[:3000]
+            try:
+                await reply_msg.edit_text(f"حدث خطأ أثناء المعالجة:\n`{err_text}`")
+            except Exception:
+                pass
+
+        # إزالة العنصر المكتمل من القائمة العامة
+        Global_Main_Queue.pop(0)
+
+    gc.collect()
+    Public_Loop = False
+
+# ==================================================================== #
+
 @bot.on_message(filters.command('start') & filters.private)
 async def command1(bot, message):
-   await message.reply('لبقية البوتات \n\n @sunnaybots')
+    await message.reply('لبقية البوتات \n\n @sunnaybots')
   
 @bot.on_message(filters.private & filters.incoming & (filters.audio | filters.voice | filters.video))
 async def _telegram_file(client, message):
-  reply_msg = await message.reply('جارِ تحميل الملف ومعالجته عبر WhisperX بدقة متناهية...')
-  file = await message.download(file_name=dl_path)
-  
-  try:
-    await reply_msg.edit_text('جارِ استخراج النصوص والمحاذاة الصوتية الدقيقة وترجمتها عبر Gemini...')
-    Srt_File = await whisperx_transcribe_and_translate_srt(file)
+    global Global_Main_Queue
+    replied = await message.reply(f"تمت الإضافة لصف الانتظار ☕\nترتيبك في القائمة: {len(Global_Main_Queue) + 1}")
     
-    await message.reply_document(Srt_File, caption="ملف الترجمة العربي الاحترافي (SRT) ✅")
-    
-    if message.video or file.lower().endswith(Video_Forms):
-      await reply_msg.edit_text('جارِ دمج الترجمة بخلفية سوداء صلبة وأبعاد مناسبة عبر FFmpeg...')
-      final_video = await burn_subtitles_ffmpeg(file, Srt_File)
-      
-      await reply_msg.edit_text('جارِ رفع الفيديو المترجم...')
-      await message.reply_video(final_video, caption="الفيديو المترجم بالعربية عبر WhisperX + Gemini جاهز ✅")
-      
-      if os.path.exists(final_video):
-        os.remove(final_video)
-    else:
-      await reply_msg.edit_text('تم استخراج ملف الترجمة العربي بدقة عالية بنجاح ✅')
-      
-    if os.path.exists(Srt_File):
-      os.remove(Srt_File)
-      
-  except Exception as e:
-    err_text = str(e)[:3000]
-    try:
-      await reply_msg.edit_text(f'حدث خطأ أثناء المعالجة:\n`{err_text}`')
-    except Exception:
-      await message.reply(f'حدث خطأ أثناء المعالجة:\n`{err_text}`')
-  
-  if os.path.exists(file):
-    os.remove(file)
+    # بناء وتمرير العنصر للقائمة العامة عبر دالة الـ Loop
+    Item = f"VidSub_{message.id}_{replied.id}_{message.from_user.id}"
+    Item_add(Item)
 
 async def start_bot_async():
     await validate_and_filter_keys_async()
     
-    if not os.path.exists(dl_path): os.makedirs(dl_path)
+    if not os.path.exists(dl_path): 
+        os.makedirs(dl_path)
     try:
         await bot.start()
-        if Admin_Id != 0 :
-            await bot.send_message(Admin_Id, 'Started ✅')
-        print(f"✅ WhisperX + Gemini Async Subtitles Bot is ONLINE!")
+        if Admin_Id != 0:
+            await bot.send_message(Admin_Id, 'Vidsub Bot Started with Global List Loop ✅')
+        print(f"✅ WhisperX + Gemini Async Subtitles Bot (Global List Loop) is ONLINE!")
         await idle()
     finally:
         if bot.is_connected:
