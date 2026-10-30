@@ -4,11 +4,8 @@ nest_asyncio.apply()
 #########################################################
 
 Bot_Token = os.getenv('TOKEN')
+Admin_Id = int(os.getenv('Admin_Id','0'))
 
-if Bot_Token == '5623514771:AAEUXl-8JzuhWhRoQBujXQRALoSKYVbqHDA':
-   Admin_Id = 7007648648
-else :
-   Admin_Id = None
 
 ########################################################
 
@@ -310,7 +307,7 @@ async def start_bot_async():
     if not os.path.exists(dl_path): os.makedirs(dl_path)
     try:
         await bot.start()
-        if Admin_Id:
+        if Admin_Id != 0 :
             await bot.send_message(Admin_Id, 'Started ✅')
         print(f"✅ WhisperX + Gemini Async Subtitles Bot is ONLINE!")
         await idle()
