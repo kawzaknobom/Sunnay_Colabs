@@ -108,11 +108,45 @@ def format_time(seconds):
     return f"{hours:02d}:{minutes:02d}:{secs:02d},{milliseconds:03d}"
 
 def wrap_arabic_text(text, width=38):
-    """تم تصحيح عرض السطر إلى 38 لكي لا يمتد النص كثيراً ويغطي الشاشة"""
+    """التحكم في عرض السطر لئلا يمتد كثيراً"""
     if not text:
         return ""
     lines = textwrap.wrap(text, width=width)
     return "\n".join(lines)
+
+def split_long_segment(start, end, text, max_chars=40):
+    """تقسيم أي شريحة طويلة إلى شرائح أصغر متساوية زمنياً ونصياً لمنع تغطية الشاشة"""
+    words = text.split()
+    if not words:
+        return []
+    
+    chunks = []
+    current_chunk_words = []
+    current_length = 0
+    
+    for word in words:
+        if current_length + len(word) + 1 > max_chars and current_chunk_words:
+            chunks.append(" ".join(current_chunk_words))
+            current_chunk_words = [word]
+            current_length = len(word)
+        else:
+            current_chunk_words.append(word)
+            current_length += len(word) + 1
+            
+    if current_chunk_words:
+        chunks.append(" ".join(current_chunk_words))
+        
+    num_chunks = len(chunks)
+    total_duration = end - start
+    chunk_duration = total_duration / num_chunks if num_chunks > 0 else total_duration
+    
+    result_segments = []
+    for idx, chunk in enumerate(chunks):
+        c_start = start + (idx * chunk_duration)
+        c_end = start + ((idx + 1) * chunk_duration)
+        result_segments.append((c_start, c_end, chunk))
+        
+    return result_segments
 
 async def get_video_dimensions(video_file):
     try:
@@ -198,14 +232,26 @@ async def whisperx_transcribe_and_translate_srt(media_file):
     result = await asyncio.to_thread(run_whisperx_pipeline, audio_file)
     
     srt_content = ""
-    for i, segment in enumerate(result["segments"], start=1):
-        start_str = format_time(segment.get("start", 0.0))
-        end_str = format_time(segment.get("end", 0.0))
+    sub_index = 1
+    
+    for segment in result["segments"]:
+        start_val = segment.get("start", 0.0)
+        end_val = segment.get("end", 0.0)
         text_en = segment.get("text", "").strip()
         
-        # استخدام العرض الجديد (width=38) لتقسيم الأسطر بشكل ممتاز
-        wrapped_text = wrap_arabic_text(text_en, width=38) if text_en else ""
-        srt_content += f"{i}\n{start_str} --> {end_str}\n{wrapped_text}\n\n"
+        if not text_en:
+            continue
+            
+        # استخدام دالة التقطيع الآلي للشرائح الطويلة
+        sub_parts = split_long_segment(start_val, end_val, text_en, max_chars=40)
+        
+        for c_start, c_end, p_text in sub_parts:
+            start_str = format_time(c_start)
+            end_str = format_time(c_end)
+            wrapped_text = wrap_arabic_text(p_text, width=35)
+            
+            srt_content += f"{sub_index}\n{start_str} --> {end_str}\n{wrapped_text}\n\n"
+            sub_index += 1
         
     with open(Srt_File, 'w', encoding='utf-8') as f:
         f.write(srt_content)
@@ -225,7 +271,7 @@ async def burn_subtitles_ffmpeg(video_file, srt_file):
     is_portrait = height > width
     
     if is_portrait:
-        font_size = max(14, min(18, int(width * 0.024))) # تصغير حجم الخط قليلاً في الفيديوهات الطويلة لمنع التراكم
+        font_size = max(14, min(18, int(width * 0.024)))
         margin_v = int(height * 0.05)
     else:
         font_size = max(22, min(36, int(width * 0.025)))
@@ -272,7 +318,6 @@ async def Multi_loop_async():
     Public_Loop = True
 
     while len(Global_Main_Queue) > 0:
-        # تحديث أرقام الترتيب للمستخدمين الموجودين في قائمة الانتظار
         for elem in range(1, len(Global_Main_Queue)):
             try:
                 A_Reply_List = Global_Main_Queue[elem].split('_')
@@ -332,7 +377,6 @@ async def Multi_loop_async():
             except Exception:
                 pass
 
-        # إزالة العنصر المكتمل من القائمة العامة
         Global_Main_Queue.pop(0)
 
     gc.collect()
@@ -349,13 +393,10 @@ async def _telegram_file(client, message):
     global Global_Main_Queue
     replied = await message.reply(f"تمت الإضافة لصف الانتظار ☕\nترتيبك في القائمة: {len(Global_Main_Queue) + 1}")
     
-    # بناء وتمرير العنصر للقائمة العامة عبر دالة الـ Loop
     Item = f"VidSub_{message.id}_{replied.id}_{message.from_user.id}"
     Item_add(Item)
 
 async def start_bot_async():
-    # await validate_and_filter_keys_async()
-    
     if not os.path.exists(dl_path): 
         os.makedirs(dl_path)
     try:
