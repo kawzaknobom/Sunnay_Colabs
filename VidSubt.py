@@ -25,7 +25,7 @@ GEMINI_MODEL_NAME = 'gemini-2.5-flash-lite'
 gemini_keys_env = os.getenv('GEMINI_API_KEYS') or os.getenv('GEMINI_API_KEY') or ''
 raw_gemini_keys = [k.strip() for k in gemini_keys_env.split(' ') if k.strip()]
 
-VALID_GEMINI_KEYS = []
+VALID_GEMINI_KEYS = raw_gemini_keys
 current_key_index = 0
 
 # استخدام قائمة عامة (Global List) بدلاً من قاعدة البيانات لتنظيم الصف
@@ -352,7 +352,7 @@ async def _telegram_file(client, message):
     Item_add(Item)
 
 async def start_bot_async():
-    await validate_and_filter_keys_async()
+    # await validate_and_filter_keys_async()
     
     if not os.path.exists(dl_path): 
         os.makedirs(dl_path)
