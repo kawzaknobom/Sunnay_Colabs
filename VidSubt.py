@@ -107,7 +107,8 @@ def format_time(seconds):
     milliseconds = int(int((seconds - int(seconds)) * 1000))
     return f"{hours:02d}:{minutes:02d}:{secs:02d},{milliseconds:03d}"
 
-def wrap_arabic_text(text, width=65):
+def wrap_arabic_text(text, width=38):
+    """تم تصحيح عرض السطر إلى 38 لكي لا يمتد النص كثيراً ويغطي الشاشة"""
     if not text:
         return ""
     lines = textwrap.wrap(text, width=width)
@@ -202,7 +203,8 @@ async def whisperx_transcribe_and_translate_srt(media_file):
         end_str = format_time(segment.get("end", 0.0))
         text_en = segment.get("text", "").strip()
         
-        wrapped_text = wrap_arabic_text(text_en, width=65) if text_en else ""
+        # استخدام العرض الجديد (width=38) لتقسيم الأسطر بشكل ممتاز
+        wrapped_text = wrap_arabic_text(text_en, width=38) if text_en else ""
         srt_content += f"{i}\n{start_str} --> {end_str}\n{wrapped_text}\n\n"
         
     with open(Srt_File, 'w', encoding='utf-8') as f:
@@ -223,10 +225,10 @@ async def burn_subtitles_ffmpeg(video_file, srt_file):
     is_portrait = height > width
     
     if is_portrait:
-        font_size = max(14, min(20, int(width * 0.026)))
+        font_size = max(14, min(18, int(width * 0.024))) # تصغير حجم الخط قليلاً في الفيديوهات الطويلة لمنع التراكم
         margin_v = int(height * 0.05)
     else:
-        font_size = max(24, min(42, int(width * 0.028)))
+        font_size = max(22, min(36, int(width * 0.025)))
         margin_v = int(height * 0.06)
     
     safe_srt_path = srt_file.replace('\\', '/').replace(':', '\\\\:')
