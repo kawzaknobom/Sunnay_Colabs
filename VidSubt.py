@@ -108,11 +108,12 @@ def format_time(seconds):
     return f"{hours:02d}:{minutes:02d}:{secs:02d},{milliseconds:03d}"
 
 def wrap_arabic_text(text, width=75):
-    """تمديد الكلام أفقياً على طول السطر دون أي تغيير في محتوى الترجمة الأصلي"""
+    """تعديل النص لدمج الأسطر المتعددة في مسافة واحدة وتجنب انقسام الأسطر"""
     if not text:
         return ""
-    lines = textwrap.wrap(text, width=width)
-    return "\n".join(lines)
+    # إزالة الأسطر وجعل النص متصلاً بمسافة فقط
+    single_line_text = " ".join(text.split())
+    return single_line_text
 
 async def get_video_dimensions(video_file):
     try:
