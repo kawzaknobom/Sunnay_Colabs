@@ -18,7 +18,6 @@ from pyrogram import idle
 
 # --- CONFIGURATION ---
 
-
 app = Client(
     "youtube_downloader_bot",
     api_id=API_ID,
@@ -75,7 +74,7 @@ async def get_video_options(client: Client, message: Message):
         await status_msg.edit_text(f"❌ **حدث خطأ أثناء جلب المعلومات:**\n`{str(e)}`")
 
 # معالجة الضغط على الأزرار
-@app.on_callback_query(filters.regex("^dl\|"))
+@app.on_callback_query(filters.regex(r"^dl\|"))
 async def handle_download_callback(client: Client, callback_query: CallbackQuery):
     data = callback_query.data.split("|")
     quality = data[1]
@@ -160,16 +159,12 @@ async def handle_download_callback(client: Client, callback_query: CallbackQuery
         if 'file_path' in locals() and os.path.exists(file_path):
             os.remove(file_path)
 
-if __name__ == "__main__":
-    print("Bot is starting...")
-    app.run()
-
 async def start_bot_async():
     try:
         await app.start()
         if Admin_Id != 0:
-            await app.send_message(Admin_Id, 'Vidsub Bot Started with Global List Loop ✅')
-        print(f"✅ WhisperX + Gemini Async Subtitles Bot (Global List Loop) is ONLINE!")
+            await app.send_message(Admin_Id, 'Bot is Running ✅')
+        print(f"✅ Ytdl Bot is ONLINE!")
         await idle()
     finally:
         if app.is_connected:
