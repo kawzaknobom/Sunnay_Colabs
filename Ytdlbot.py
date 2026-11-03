@@ -5,6 +5,7 @@ nest_asyncio.apply()
 
 BOT_TOKEN = os.getenv('TOKEN')
 Admin_Id = int(os.getenv('Admin_Id','0'))
+Playlist_Num = int(os.getenv('Playlist_Num','0'))
 API_ID = 15952578
 API_HASH = '3600ce5f8f9b9e18cba0f318fa0e3600'
 
@@ -208,7 +209,7 @@ async def handle_playlist_download_callback(client: Client, callback_query: Call
             return
 
         current_index = 0
-        for entry in entries:
+        for entry in entries[Playlist_Num:]:
             current_index += 1
             v_id = entry.get('id')
             v_url = f"https://youtu.be/{v_id}"
