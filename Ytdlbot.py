@@ -208,7 +208,7 @@ async def handle_playlist_download_callback(client: Client, callback_query: Call
             await message.edit_text("❌ **عذراً:** القائمة فارغة ولا تحتوي على فيديوهات.")
             return
 
-        current_index = 0
+        current_index = Playlist_Num
         for entry in entries[Playlist_Num:]:
             current_index += 1
             v_id = entry.get('id')
