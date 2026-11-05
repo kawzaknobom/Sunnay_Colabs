@@ -80,21 +80,33 @@ async def Check_Dir(Dir):
 async def _telegram_file(client, message):
   if message.document : 
            Ocr_dl_path = f'./downloads_{message.id}_{Bot_Identifier}/'
-           replied = await message.reply('جار العمل')
+           try : 
+            replied = await message.reply('جار العمل')
+           except :
+            pass
            Ocr_File = await message.download(file_name=Ocr_dl_path)
            Txt_File,Docx_File = Ocr_Func(Ocr_File)
            await message.reply_document(Txt_File)
            await message.reply_document(Docx_File)
-           await replied.edit_text('تم العمل')
+           try : 
+            await replied.edit_text('تم العمل')
+           except : 
+              pass
            await Check_Dir(Ocr_dl_path)
   elif message.photo :
-           replied = await message.reply('جار العمل')
+           try : 
+            replied = await message.reply('جار العمل')
+           except : 
+              pass
            Ocr_dl_path = f'./downloads_{message.id}_{Bot_Identifier}/'
            Ocr_File = await message.download(file_name=Ocr_dl_path)
            Txt_File,Docx_File = Ocr_Func(Ocr_File)
            await message.reply(open(Txt_File,'r').read())
            await message.reply_document(Txt_File)
-           await replied.edit_text('تم العمل')
+           try : 
+            await replied.edit_text('تم العمل')
+           except : 
+              pass
            await Check_Dir(Ocr_dl_path)
     
 
