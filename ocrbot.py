@@ -48,20 +48,21 @@ def Get_File(Dl_Dir,File_Ex):
   return None
       
       
-def Ocr_Func(Ocr_Path,Serv_Acc):
-  
-  Dir_Path = ('.' if Ocr_Path.startswith('.') else '') + '/'.join(Ocr_Path.split('/')[:-1]) + '/'
-  abs_serv_acc = os.path.abspath(Serv_Acc)
+def Ocr_Func(Ocr_Path):
+  ServAcc_File = 'servac.json'
+  Dir_Path = '/'.join(Ocr_Path.split('/')[:-1]) + '/'
+  abs_serv_acc = os.path.abspath(ServAcc_File)
   os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = abs_serv_acc
   Tahweel_Cmd = (
-        f'tahweel "{Ocr_Path}" '
-        f'--service-account-credentials "{abs_serv_acc}" '
-        f'--pdf2image-thread-count 8 '
-        f'--processor-max-workers 8 '
-        f'--txt-page-separator 🟥'
-    )
+          f'tahweel "{Ocr_Path}" '
+          f'--service-account-credentials "{abs_serv_acc}" '
+          f'--pdf2image-thread-count 8 '
+          f'--processor-max-workers 8 '
+          f'--txt-page-separator 🟥'
+      )
   p = subprocess.Popen(Tahweel_Cmd,cwd=Dir_Path,shell=True,env=os.environ)
   p.wait()
+  
   Txt_File = Get_File(Dir_Path,'txt')
   Docx_File = Get_File(Dir_Path,'docx')
   return Txt_File,Docx_File
@@ -81,7 +82,7 @@ async def _telegram_file(client, message):
            Ocr_dl_path = f'./downloads_{message.id}_{Bot_Identifier}/'
            replied = await message.reply('جار العمل')
            Ocr_File = await message.download(file_name=Ocr_dl_path)
-           Txt_File,Docx_File = Ocr_Func(Ocr_File,globals()['ServAcc_File'])
+           Txt_File,Docx_File = Ocr_Func(Ocr_File)
            await message.reply_document(Txt_File)
            await message.reply_document(Docx_File)
            await replied.edit_text('تم العمل')
@@ -90,7 +91,7 @@ async def _telegram_file(client, message):
            replied = await message.reply('جار العمل')
            Ocr_dl_path = f'./downloads_{message.id}_{Bot_Identifier}/'
            Ocr_File = await message.download(file_name=Ocr_dl_path)
-           Txt_File,Docx_File = Ocr_Func(Ocr_File,globals()['ServAcc_File'])
+           Txt_File,Docx_File = Ocr_Func(Ocr_File)
            await message.reply(open(Txt_File,'r').read())
            await message.reply_document(Txt_File)
            await replied.edit_text('تم العمل')
