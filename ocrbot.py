@@ -76,9 +76,15 @@ async def Check_Dir(Dir):
       shutil.rmtree(Dir)
   await Create_Dir(Dir)
 
+processed_messages = set()
+
 @bot.on_message(filters.private & filters.incoming)
 async def _telegram_file(client, message):
+  if message.id in processed_messages:
+      return
+  processed_messages.add(message.id)
   if message.document : 
+           
            Ocr_dl_path = f'./downloads_{message.id}_{Bot_Identifier}/'
            try : 
             replied = await message.reply('جار العمل')
@@ -93,7 +99,9 @@ async def _telegram_file(client, message):
            except : 
               pass
            await Check_Dir(Ocr_dl_path)
+
   elif message.photo :
+           
            try : 
             replied = await message.reply('جار العمل')
            except : 
@@ -108,8 +116,6 @@ async def _telegram_file(client, message):
            except : 
               pass
            await Check_Dir(Ocr_dl_path)
-    
-
 
 def main():
     try:
