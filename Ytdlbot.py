@@ -30,7 +30,7 @@ user_data = {}
 @app.on_message(filters.command("start"))
 async def start_command(client: Client, message: Message):
     await message.reply_text(
-        "👋 **أهلاً بك!** أرسل لي أي رابط فيديو، قائمة تشغيل (Playlist)، أو قناة يوتيوب، وسأتيح لك خيارات التحميل المناسبة."
+        "👋 **أهلاً بك!** أرسل لي رابط قائمة تشغيل (Playlist)، قناة يوتيوب، أو فيديو فردي وسأتعامل معه فوراً."
     )
 
 @app.on_message(filters.text & (filters.regex("http://") | filters.regex("https://")))
@@ -38,244 +38,222 @@ async def get_video_options(client: Client, message: Message):
     url = message.text.strip()
     user_id = message.from_user.id
     
-    status_msg = await message.reply_text("⏳ **جاري جلب معلومات الرابط...**")
+    status_msg = await message.reply_text("⏳ **جاري فحص الروابط واستخراج القائمة...**")
 
     try:
-        def fetch_info():
-            # إضافة ignoreerrors هنا لتخطي الفيديوهات المحذوفة أثناء الفحص المبدئي للقائمة
-            ydl_opts = {'extract_flat': False, 'skip_download': True, 'ignoreerrors': True}
+        def fetch_links():
+            # استخراج الروابط بطريقة مسطحة وسريعة ومضمونة عبر yt-dlp دون مشاكل الفيديوهات المحذوفة
+            ydl_opts = {
+                'extract_flat': True,
+                'skip_download': True,
+                'ignoreerrors': True
+            }
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                return ydl.extract_info(url, download=False)
+                info = ydl.extract_info(url, download=False)
+                if not info:
+                    return "video", "YouTube Content", [url]
+                
+                title = info.get('title', 'YouTube Content')
+                if 'entries' in info:
+                    links = []
+                    for entry in info['entries']:
+                        if entry:
+                            vid_url = entry.get('url') or f"https://www.youtube.com/watch?v={entry.get('id')}"
+                            links.append(vid_url)
+                    content_type = "playlist" if "playlist" in url or "list=" in url else "channel"
+                    return content_type, title, links
+                else:
+                    return "video", title, [url]
 
         loop = asyncio.get_running_loop()
-        info = await loop.run_in_executor(None, fetch_info)
+        content_type, title, links = await loop.run_in_executor(None, fetch_links)
         
-        if not info:
-            await status_msg.edit_text("❌ **تعذر جلب معلومات هذا الرابط، قد يكون محذوفاً بالكامل أو غير متاح.**")
-            return
+        user_data[user_id] = {
+            "type": content_type,
+            "links": links,
+            "title": title
+        }
 
-        is_playlist = 'entries' in info
-        title = info.get('title', 'YouTube Content')
-        
-        user_data[user_id] = url
-
-        if is_playlist:
-            entries = [e for e in info.get('entries', []) if e is not None]
-            entries_count = len(entries)
-
+        if content_type in ["playlist", "channel"]:
             keyboard = InlineKeyboardMarkup([
                 [
-                    InlineKeyboardButton("📂 تحميل القائمة كاملة (فيديو)", callback_data="pl|vid"),
+                    InlineKeyboardButton("📂 تحميل القائمة كاملة (فيديو 480p)", callback_data="pl|480"),
+                    InlineKeyboardButton("📂 تحميل القائمة كاملة (فيديو 720p)", callback_data="pl|720")
+                ],
+                [
                     InlineKeyboardButton("🎵 تحميل القائمة كاملة (صوت MP3)", callback_data="pl|mp3")
                 ]
             ])
             await status_msg.edit_text(
-                f"📌 **قائمة تشغيل / قناة:** {title}\n📊 **عدد العناصر المتاحة:** {entries_count}\n\nاختر صيغة التحميل:",
+                f"📌 **{'قائمة تشغيل' if content_type == 'playlist' else 'قناة'}:** {title}\n📊 **عدد الروابط المستخرجة:** {len(links)}\n\nاختر صيغة التحميل المطلوبة:",
                 reply_markup=keyboard
             )
         else:
             keyboard = InlineKeyboardMarkup([
                 [
-                    InlineKeyboardButton("🎬 جودة عالية (1080p)", callback_data="dl|1080"),
-                    InlineKeyboardButton("🎬 جودة متوسطة (720p)", callback_data="dl|720")
+                    InlineKeyboardButton("🎬 جودة (720p)", callback_data="dl|720"),
+                    InlineKeyboardButton("🎬 جودة (480p)", callback_data="dl|480")
                 ],
                 [
-                    InlineKeyboardButton("🎬 جودة منخفضة (480p)", callback_data="dl|480"),
                     InlineKeyboardButton("🎵 تحويل إلى صوت (MP3)", callback_data="dl|mp3")
                 ]
             ])
-
             await status_msg.edit_text(
                 f"📌 **{title}**\n\nاختر صيغة التحميل المطلوبة:",
                 reply_markup=keyboard
             )
 
     except Exception as e:
-        await status_msg.edit_text(f"❌ **حدث خطأ أثناء جلب المعلومات:**\n`{str(e)}`")
+        await status_msg.edit_text(f"❌ **حدث خطأ أثناء جلب الروابط:**\n`{str(e)}`")
 
+# معالجة تحميل الفيديو الفردي
 @app.on_callback_query(filters.regex(r"^dl\|"))
-async def handle_download_callback(client: Client, callback_query: CallbackQuery):
+async def handle_single_download(client: Client, callback_query: CallbackQuery):
     user_id = callback_query.from_user.id
-    quality = callback_query.data.split("|")[1]
+    action = callback_query.data.split("|")[1]
     
-    url = user_data.get(user_id)
-    if not url:
-        await callback_query.message.edit_text("❌ **انتهت صلاحية الجلسة، يرجى إرسال الرابط مجدداً.**")
+    user_info = user_data.get(user_id)
+    if not user_info or not user_info["links"]:
+        await callback_query.message.edit_text("❌ **انتهت صلاحية الجلسة، أرسل الرابط مجدداً.**")
         return
     
+    url = user_info["links"][0]
     message = callback_query.message
     await message.edit_text("📥 **جاري التحميل والمعالجة... يرجى الانتظار.**")
 
     os.makedirs("downloads", exist_ok=True)
-    
+
     try:
-        if quality == "mp3":
+        if action == "mp3":
             ydl_opts = {
                 'format': 'bestaudio/best',
                 'outtmpl': 'downloads/%(id)s.%(ext)s',
-                'postprocessors': [{
-                    'key': 'FFmpegExtractAudio',
-                    'preferredcodec': 'mp3',
-                    'preferredquality': '192',
-                }],
+                'postprocessors': [{'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3', 'preferredquality': '192'}],
             }
         else:
+            height = action
             ydl_opts = {
-                'format': f'bestvideo[height<={quality}][ext=mp4]+bestaudio[ext=m4a]/best[height<={quality}][ext=mp4]/best',
+                'format': f'bestvideo[height<={height}][ext=mp4]+bestaudio[ext=m4a]/best[height<={height}][ext=mp4]/bestvideo[height<=360][ext=mp4]+bestaudio/best[height<=360]/best',
                 'outtmpl': 'downloads/%(id)s.%(ext)s',
             }
 
-        def download_media():
+        def download_single():
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=True)
-                actual_id = info.get('id', 'video')
-                if quality == "mp3":
-                    file_path = os.path.join("downloads", f"{actual_id}.mp3")
-                else:
-                    file_path = ydl.prepare_filename(info)
-                return info, file_path
+                return info, ydl.prepare_filename(info)
 
         loop = asyncio.get_running_loop()
-        info, file_path = await loop.run_in_executor(None, download_media)
-        
-        title = info.get('title', 'Media')
-        actual_id = info.get('id', 'video')
+        info, file_path = await loop.run_in_executor(None, download_single)
         
         if not os.path.exists(file_path):
             for f in os.listdir("downloads"):
-                if actual_id in f:
+                if info.get('id', '') in f:
                     file_path = os.path.join("downloads", f)
                     break
 
-        if not os.path.exists(file_path):
-            await message.edit_text("❌ **فشل التحميل:** لم يتم العثور على الملف الناتج.")
-            return
-
         await message.edit_text("📤 **جاري الرفع إلى تيليجرام...**")
-
-        if quality == "mp3":
-            await client.send_audio(
-                chat_id=message.chat.id,
-                audio=file_path,
-                title=title,
-                performer=info.get('uploader', 'YouTube')
-            )
+        if action == "mp3":
+            await client.send_audio(chat_id=message.chat.id, audio=file_path, title=info.get('title', 'Media'))
         else:
-            await client.send_video(
-                chat_id=message.chat.id,
-                video=file_path,
-                caption=f"🎬 **{title}**",
-                duration=info.get('duration', 0),
-                supports_streaming=True
-            )
+            await client.send_video(chat_id=message.chat.id, video=file_path, caption=f"🎬 **{info.get('title')}**", supports_streaming=True)
 
         await message.delete()
+        if os.path.exists(file_path):
+            os.remove(file_path)
 
     except Exception as e:
         await message.edit_text(f"❌ **حدث خطأ أثناء التحميل:**\n`{str(e)}`")
     finally:
-        if 'file_path' in locals() and os.path.exists(file_path):
-            os.remove(file_path)
         user_data.pop(user_id, None)
 
+# معالجة لوب قوائم التشغيل والقنوات وتخطي المحذوف مع اختيار الجودة الاحتياطية (360p)
 @app.on_callback_query(filters.regex(r"^pl\|"))
-async def handle_playlist_callback(client: Client, callback_query: CallbackQuery):
+async def handle_playlist_download(client: Client, callback_query: CallbackQuery):
     user_id = callback_query.from_user.id
-    media_type = callback_query.data.split("|")[1]
+    action = callback_query.data.split("|")[1] # mp3, 480, 720
     
-    url = user_data.get(user_id)
-    if not url:
-        await callback_query.message.edit_text("❌ **انتهت صلاحية الجلسة، يرجى إرسال الرابط مجدداً.**")
+    user_info = user_data.get(user_id)
+    if not user_info:
+        await callback_query.message.edit_text("❌ **انتهت صلاحية الجلسة، أرسل الرابط مجدداً.**")
         return
 
+    links = user_info["links"]
+    playlist_title = user_info["title"]
+    total_count = len(links)
+
     message = callback_query.message
-    await message.edit_text("📥 **جاري تحميل قائمة التشغيل/القناة كاملة... سيتم تخطي أي فيديو محذوف أو تالف تلقائياً.**")
+    await message.edit_text(f"📥 **بدء تحميل القائمة ({playlist_title}) - إجمالي العناصر: {total_count}**")
 
     os.makedirs("downloads", exist_ok=True)
+    sent_count = 0
 
-    try:
-        if media_type == "mp3":
-            ydl_opts = {
-                'format': 'bestaudio/best',
-                'outtmpl': 'downloads/%(playlist_title)s/%(title)s.%(ext)s',
-                'ignoreerrors': True,
-                'postprocessors': [{
-                    'key': 'FFmpegExtractAudio',
-                    'preferredcodec': 'mp3',
-                    'preferredquality': '192',
-                }],
-            }
-        else:
-            ydl_opts = {
-                'format': 'best[ext=mp4]/best',
-                'outtmpl': 'downloads/%(playlist_title)s/%(title)s.%(ext)s',
-                'ignoreerrors': True,
-            }
+    for index, link in enumerate(links, start=1):
+        try:
+            if action == "mp3":
+                ydl_opts = {
+                    'format': 'bestaudio/best',
+                    'outtmpl': 'downloads/%(id)s.%(ext)s',
+                    'ignoreerrors': True,
+                    'postprocessors': [{'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3', 'preferredquality': '192'}],
+                }
+            else:
+                height = action
+                # اللوب يضمن أنه لو الجودة المطلوبة غير متوفرة سينزل إلى 360p تلقائياً
+                ydl_opts = {
+                    'format': f'bestvideo[height<={height}][ext=mp4]+bestaudio[ext=m4a]/best[height<={height}][ext=mp4]/bestvideo[height<=360][ext=mp4]+bestaudio/best[height<=360]/best',
+                    'outtmpl': 'downloads/%(id)s.%(ext)s',
+                    'ignoreerrors': True,
+                }
 
-        def download_playlist():
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                return ydl.extract_info(url, download=True)
+            def download_item():
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    info = ydl.extract_info(link, download=True)
+                    if not info:
+                        return None, None
+                    return info, ydl.prepare_filename(info)
 
-        loop = asyncio.get_running_loop()
-        playlist_info = await loop.run_in_executor(None, download_playlist)
-        
-        if not playlist_info:
-            await message.edit_text("❌ **فشل تحميل القائمة أو أن محتواها غير متاح.**")
-            return
-
-        playlist_title = playlist_info.get('title', 'Playlist')
-        entries = [e for e in playlist_info.get('entries', []) if e is not None]
-        total_count = len(entries)
-
-        await message.edit_text(f"📤 **تم معالجة قائمة التشغيل ({playlist_title}). جاري رفع الملفات المتاحة مع الترقيم...**")
-
-        sent_count = 0
-        
-        for index, entry in enumerate(entries, start=1):
-            if not entry:
-                continue
-            vid_title = entry.get('title', 'video')
-            vid_id = entry.get('id')
+            loop = asyncio.get_running_loop()
+            info, file_path = await loop.run_in_executor(None, download_item)
             
-            target_file = None
-            for root, dirs, files in os.walk("downloads"):
-                for file in files:
-                    if vid_id in file or (vid_title[:10] in file):
-                        target_file = os.path.join(root, file)
+            if not info or not file_path or not os.path.exists(file_path):
+                found = False
+                for f in os.listdir("downloads"):
+                    if info and info.get('id', '') in f:
+                        file_path = os.path.join("downloads", f)
+                        found = True
                         break
-                if target_file:
-                    break
+                if not found:
+                    continue
 
-            if target_file and os.path.exists(target_file):
-                try:
-                    caption_text = f"🎬 **{vid_title}**\n\n📌 **فيديو ({index} من أصل {total_count})**"
-                    audio_title = f"{vid_title} ({index}/{total_count})"
+            vid_title = info.get('title', 'video')
+            caption_text = f"🎬 **{vid_title}**\n\n📌 **فيديو ({index} من أصل {total_count})**"
+            audio_title = f"{vid_title} ({index}/{total_count})"
 
-                    if media_type == "mp3":
-                        await client.send_audio(
-                            chat_id=message.chat.id,
-                            audio=target_file,
-                            title=audio_title,
-                            performer=f"{playlist_title} [{index}/{total_count}]"
-                        )
-                    else:
-                        await client.send_video(
-                            chat_id=message.chat.id,
-                            video=target_file,
-                            caption=caption_text,
-                            supports_streaming=True
-                        )
-                    sent_count += 1
-                    os.remove(target_file)
-                except Exception as send_err:
-                    print(f"Failed to send {vid_title}: {send_err}")
+            if action == "mp3":
+                await client.send_audio(
+                    chat_id=message.chat.id,
+                    audio=file_path,
+                    title=audio_title,
+                    performer=playlist_title
+                )
+            else:
+                await client.send_video(
+                    chat_id=message.chat.id,
+                    video=file_path,
+                    caption=caption_text,
+                    supports_streaming=True
+                )
+            
+            sent_count += 1
+            if os.path.exists(file_path):
+                os.remove(file_path)
 
-        await message.edit_text(f"✅ **تم الانتهاء بنجاح!** تم إرسال {sent_count} من أصل {total_count} فيديو/صوت متوفر وتخطي المحذوف.")
+        except Exception as item_err:
+            print(f"Skipped item {index} due to error: {item_err}")
+            continue
 
-    except Exception as e:
-        await message.edit_text(f"❌ **حدث خطأ أثناء تحميل القائمة:**\n`{str(e)}`")
-    finally:
-        user_data.pop(user_id, None)
+    await message.edit_text(f"✅ **تم الانتهاء من تحميل القائمة!** تم إرسال {sent_count} من أصل {total_count} بنجاح.")
+    user_data.pop(user_id, None)
 
 async def start_bot_async():
     try:
