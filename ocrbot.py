@@ -1,11 +1,17 @@
 import nest_asyncio
 nest_asyncio.apply()
-import os
+import os,json
 
 #########################################################
 
 Bot_Token = os.getenv('TOKEN')
 Admin_Id = int(os.getenv('Admin_Id','0'))
+Serv_Acc = os.environ['Service_Acc']
+clean_string = Serv_Acc.replace("\xa0", " ")
+data = json.loads(clean_string)
+formatted_json = json.dumps(data, indent=2)
+ServAcc_File = 'servac.json'
+open(ServAcc_File,'w').write(formatted_json)
 
 ########################################################
 
@@ -72,13 +78,6 @@ async def Check_Dir(Dir):
 @bot.on_message(filters.private & filters.incoming)
 async def _telegram_file(client, message):
   if message.document : 
-     if message.document.file_name.lower().endswith('json') : 
-        globals()['ServAcc_File'] = await message.download(file_name=ServAcc_Dir)
-        await message.reply('تم تلقيم ملف Ocr')
-     else :
-        if len(globals()['ServAcc_File']) == 0 : 
-            await message.reply('قم بإرسال ملف Service Account')
-        else : 
            Ocr_dl_path = f'./downloads_{message.id}_{Bot_Identifier}/'
            replied = await message.reply('جار العمل')
            Ocr_File = await message.download(file_name=Ocr_dl_path)
@@ -88,9 +87,6 @@ async def _telegram_file(client, message):
            await replied.edit_text('تم العمل')
            await Check_Dir(Ocr_dl_path)
   elif message.photo :
-     if len(globals()['ServAcc_File']) == 0 : 
-        await message.reply('قم بإرسال ملف Service Account')
-     else :
            replied = await message.reply('جار العمل')
            Ocr_dl_path = f'./downloads_{message.id}_{Bot_Identifier}/'
            Ocr_File = await message.download(file_name=Ocr_dl_path)
