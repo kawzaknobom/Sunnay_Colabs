@@ -6,7 +6,7 @@ Bot_Token = os.getenv('TOKEN')  # ضع توكن البوت هنا أو في مت
 Admin_Id = int(os.getenv('Admin_Id', '0'))
 #########################################################
 
-import json,asyncio
+import json, asyncio
 from pyrogram import Client, filters
 from pyrogram import idle
 from pyrogram.types import Message
@@ -17,7 +17,7 @@ Api_Hash = '3600ce5f8f9b9e18cba0f318fa0e3600'
 
 bot = Client("MergeSubBot", api_id=Api_Id, api_hash=Api_Hash, bot_token=Bot_Token)
 
-# قاموس مؤقت لحفظ حالة المستخدمين (فيديو في انتظار ملف الترجمة)
+# قاموس مؤقت لحفظ رسالة الفيديو للمستخدمين حتى يتم إرسال ملف الترجمة
 user_states = {}
 
 async def run_command(cmd):
@@ -77,51 +77,59 @@ async def start_handler(client, message: Message):
     await message.reply(
         "مرحباً بك في بوت دمج الترجمة! 🎬\n\n"
         "الخطوات:\n"
-        "1. أرسل ملف الفيديو أولاً.\n"
-        "2. أرسل ملف الترجمة بصيغة (.srt) ثانياً وسأقوم بدمجهما فوراً وإرسال الفيديو المترجم."
+        "1. أرسل ملف الفيديو أولاً (سيتم حفظه مؤقتاً بدون تحميل).\n"
+        "2. أرسل ملف الترجمة (.srt) وسيقوم البوت بتحميل الفيديو والترجمة معاً لدمجهما فوراً."
     )
 
 @bot.on_message(filters.private & (filters.video | filters.document))
 async def receive_files(client, message: Message):
     user_id = message.from_user.id
     
-    # التحقق مما إذا كان المرفق فيديو
+    # 1. إذا كان المرفق فيديو: نقوم بحفظ مرجع الرسالة فقط دون تحميل
     if message.video or (message.document and message.document.mime_type and "video" in message.document.mime_type):
-        status_msg = await message.reply("📥 جاري تحميل الفيديو...")
-        download_dir = f"./downloads_{user_id}/"
-        os.makedirs(download_dir, exist_ok=True)
+        status_msg = await message.reply("📌 تم استلام وحفظ رسالة الفيديو بانتظار ملف الترجمة...")
         
-        video_path = await message.download(file_name=download_dir)
-        user_states[user_id] = {"video_path": video_path, "status_msg_id": status_msg.id}
-        
-        await status_msg.edit_text("✅ تم استلام الفيديو بنجاح.\nالآن يرجى إرسال ملف الترجمة بصيغة (.srt).")
+        # تخزين كائن الرسالة الخاص بالفيديو وحالة رسالة التنبيه
+        user_states[user_id] = {
+            "video_message": message,
+            "status_msg_id": status_msg.id
+        }
         return
 
-    # التحقق مما إذا كان المرفق ملف ترجمة سبرت (.srt)
+    # 2. إذا كان المرفق ملف ترجمة (.srt): نقوم بتحميل الفيديو والترجمة معاً الآن
     if message.document and (message.document.file_name.endswith(".srt") or message.document.mime_type == "application/x-subrip"):
-        if user_id not in user_states or "video_path" not in user_states[user_id]:
+        if user_id not in user_states or "video_message" not in user_states[user_id]:
             await message.reply("⚠️ الرجاء إرسال ملف الفيديو أولاً قبل إرسال ملف الترجمة!")
             return
             
         state = user_states[user_id]
         status_msg = await client.get_messages(user_id, state["status_msg_id"])
         
-        await status_msg.edit_text("📥 جاري تحميل ملف الترجمة...")
-        download_dir = f"./downloads_{user_id}/"
-        srt_path = await message.download(file_name=download_dir)
-        
         try:
-            await status_msg.edit_text("⏳ جاري دمج الترجمة بالفيديو عبر FFmpeg (قد يستغرق ذلك بعض الوقت)...")
-            final_video = await burn_subtitles_ffmpeg(state["video_path"], srt_path)
+            download_dir = f"./downloads_{user_id}/"
+            os.makedirs(download_dir, exist_ok=True)
             
+            # تحميل الفيديو الآن
+            await status_msg.edit_text("📥 جاري تحميل الفيديو...")
+            video_path = await state["video_message"].download(file_name=download_dir)
+            
+            # تحميل ملف الترجمة الآن
+            await status_msg.edit_text("📥 جاري تحميل ملف الترجمة...")
+            srt_path = await message.download(file_name=download_dir)
+            
+            # بدء عملية الدمج عبر FFmpeg
+            await status_msg.edit_text("⏳ جاري دمج الترجمة بالفيديو عبر FFmpeg (قد يستغرق ذلك بعض الوقت)...")
+            final_video = await burn_subtitles_ffmpeg(video_path, srt_path)
+            
+            # رفع الناتج
             await status_msg.edit_text("📤 جاري رفع الفيديو المترجم...")
             await message.reply_video(final_video, caption="تم دمج الترجمة بنجاح ✅")
             
             # تنظيف الملفات المؤقتة
             if os.path.exists(final_video):
                 os.remove(final_video)
-            if os.path.exists(state["video_path"]):
-                os.remove(state["video_path"])
+            if os.path.exists(video_path):
+                os.remove(video_path)
             if os.path.exists(srt_path):
                 os.remove(srt_path)
                 
