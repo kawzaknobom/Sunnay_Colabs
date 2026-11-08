@@ -1,0 +1,5 @@
+pyrogram
+tgcrypto
+stable-ts
+google-genai
+nest_asyncio
