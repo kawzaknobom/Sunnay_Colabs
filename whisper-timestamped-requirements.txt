@@ -1,0 +1,6 @@
+pyrogram
+tgcrypto
+whisper-timestamped
+google-genai
+nest_asyncio
+av<19
