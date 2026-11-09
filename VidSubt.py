@@ -18,22 +18,18 @@ import torch
 import whisperx
 from google import genai
 
-# اسم النموذج المستقر للترجمة السريعة
 GEMINI_MODEL_NAME = 'gemini-2.5-flash-lite'
 
-# جلب جميع التوكنات المفصولة بمسافة " " من متغير البيئة
 gemini_keys_env = os.getenv('GEMINI_API_KEYS') or os.getenv('GEMINI_API_KEY') or ''
 raw_gemini_keys = [k.strip() for k in gemini_keys_env.split(' ') if k.strip()]
 
 VALID_GEMINI_KEYS = raw_gemini_keys
 current_key_index = 0
 
-# استخدام قائمة عامة (Global List) بدلاً من قاعدة البيانات لتنظيم الصف
 Global_Main_Queue = []
 Public_Loop = False
 
 def test_single_key(key):
-    """دالة اختبار التوكن الواحدة بشكل منفصل"""
     try:
         client = genai.Client(api_key=key)
         client.models.generate_content(
@@ -45,7 +41,6 @@ def test_single_key(key):
         return False, str(e).splitlines()[0]
 
 async def validate_and_filter_keys_async():
-    """اختبار سريع وغير محجب لجميع التوكنات مع مهلة زمنية لكل توكن"""
     global VALID_GEMINI_KEYS
     if not raw_gemini_keys:
         print("⚠️ تحذير: لم يتم العثور على أي توكن لجمناي في متغيرات البيئة.")
@@ -107,12 +102,6 @@ def format_time(seconds):
     milliseconds = int(int((seconds - int(seconds)) * 1000))
     return f"{hours:02d}:{minutes:02d}:{secs:02d},{milliseconds:03d}"
 
-def wrap_arabic_text(text, width=75):
-    if not text:
-        return ""
-    single_line_text = " ".join(text.split())
-    return single_line_text
-
 async def get_video_duration(video_file):
     try:
         cmd = f'ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "{video_file}"'
@@ -156,7 +145,45 @@ async def split_video_into_hour_chunks(video_file, task_dl_path):
         
     return chunks
 
-async def translate_srt_with_gemini(srt_file_path):
+def run_whisperx_pipeline(audio_file):
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    compute_type = "int8" if device == "cuda" else "float32"
+    
+    model = whisperx.load_model("large-v3", device, compute_type=compute_type)
+    audio = whisperx.load_audio(audio_file)
+    result = model.transcribe(audio, batch_size=16)
+    
+    model_a, metadata = whisperx.load_align_model(language_code=result["language"], device=device)
+    result = whisperx.align(result["segments"], model_a, metadata, audio, device, return_char_alignments=False)
+    
+    return result
+
+async def whisperx_extract_srt_chunk(media_file, time_offset=0.0, subtitle_index_offset=0):
+    """استخراج الترجمة الإنجليزية فقط دون ترجمة لكل جزء"""
+    audio_file = await Mp3_Conv(media_file)
+    result = await asyncio.to_thread(run_whisperx_pipeline, audio_file)
+    
+    srt_content = ""
+    seg_counter = 1 + subtitle_index_offset
+    for segment in result["segments"]:
+        start_sec = segment.get("start", 0.0) + time_offset
+        end_sec = segment.get("end", 0.0) + time_offset
+        
+        start_str = format_time(start_sec)
+        end_str = format_time(end_sec)
+        text_en = segment.get("text", "").strip()
+        
+        if text_en:
+            srt_content += f"{seg_counter}\n{start_str} --> {end_str}\n{text_en}\n\n"
+            seg_counter += 1
+        
+    if os.path.exists(audio_file):
+        os.remove(audio_file)
+        
+    return srt_content, seg_counter - subtitle_index_offset
+
+async def translate_full_srt_with_gemini(srt_file_path):
+    """ترجمة ملف الترجمة الشامل دفعة واحدة عبر Gemini"""
     if not VALID_GEMINI_KEYS:
         raise ValueError("❌ لا توجد أي توكنات صالحة لجمناي متروكة بعد الفحص!")
 
@@ -164,7 +191,7 @@ async def translate_srt_with_gemini(srt_file_path):
         srt_content = f.read()
 
     prompt = (
-        "You are a professional subtitle translator. Translate the following SRT subtitle content from English to Arabic. "
+        "You are a professional subtitle translator. Translate the following full SRT subtitle content from English to Arabic. "
         "Strictly adhere to these rules:\n"
         "1. Keep the exact SRT format, subtitle index numbers, and timecodes (e.g., 00:00:01,000 --> 00:00:04,000) completely unchanged.\n"
         "2. Translate ONLY the English text spoken in the subtitles into natural, accurate, and fluent Arabic suitable for video subtitles.\n"
@@ -201,54 +228,11 @@ async def translate_srt_with_gemini(srt_file_path):
     if not translated_text:
         raise Exception("فشلت عملية الترجمة باستخدام التوكنات الصالحة.")
 
-    with open(srt_file_path, 'w', encoding='utf-8') as f:
+    translated_srt_path = srt_file_path.replace('_EN.srt', '_AR.srt')
+    with open(translated_srt_path, 'w', encoding='utf-8') as f:
         f.write(translated_text)
 
-    return srt_file_path
-
-def run_whisperx_pipeline(audio_file):
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    compute_type = "int8" if device == "cuda" else "float32"
-    
-    model = whisperx.load_model("large-v3", device, compute_type=compute_type)
-    audio = whisperx.load_audio(audio_file)
-    result = model.transcribe(audio, batch_size=16)
-    
-    model_a, metadata = whisperx.load_align_model(language_code=result["language"], device=device)
-    result = whisperx.align(result["segments"], model_a, metadata, audio, device, return_char_alignments=False)
-    
-    return result
-
-async def whisperx_transcribe_and_translate_srt(media_file, time_offset=0.0, subtitle_index_offset=0):
-    mainDir = '/'.join(media_file.split('/')[:-1]) + '/'
-    base_name = media_file.split('/')[-1].split('.')[0]
-    Srt_File = mainDir + base_name + '_AR.srt'
-    
-    audio_file = await Mp3_Conv(media_file)
-    result = await asyncio.to_thread(run_whisperx_pipeline, audio_file)
-    
-    srt_content = ""
-    seg_counter = 1 + subtitle_index_offset
-    for segment in result["segments"]:
-        start_sec = segment.get("start", 0.0) + time_offset
-        end_sec = segment.get("end", 0.0) + time_offset
-        
-        start_str = format_time(start_sec)
-        end_str = format_time(end_sec)
-        text_en = segment.get("text", "").strip()
-        
-        wrapped_text = wrap_arabic_text(text_en, width=75) if text_en else ""
-        srt_content += f"{seg_counter}\n{start_str} --> {end_str}\n{wrapped_text}\n\n"
-        seg_counter += 1
-        
-    with open(Srt_File, 'w', encoding='utf-8') as f:
-        f.write(srt_content)
-        
-    if os.path.exists(audio_file):
-        os.remove(audio_file)
-        
-    await translate_srt_with_gemini(Srt_File)
-    return Srt_File, seg_counter - subtitle_index_offset
+    return translated_srt_path
 
 async def burn_subtitles_ffmpeg(video_file, srt_file):
     mainDir = '/'.join(video_file.split('/')[:-1]) + '/'
@@ -280,19 +264,6 @@ async def burn_subtitles_ffmpeg(video_file, srt_file):
     
     await run_command(ffmpeg_cmd)
     return output_video
-
-async def concat_videos(video_list, output_file):
-    list_file_path = os.path.join(os.path.dirname(output_file), "playlist.txt")
-    with open(list_file_path, 'w', encoding='utf-8') as f:
-        for v in video_list:
-            f.write(f"file '{os.path.abspath(v)}'\n")
-            
-    cmd = f'ffmpeg -f concat -safe 0 -i "{list_file_path}" -c copy "{output_file}" -y'
-    await run_command(cmd)
-    
-    if os.path.exists(list_file_path):
-        os.remove(list_file_path)
-    return output_file
 
 def Pyrogram_Client(Bot_Token):
     Bot_Identifier = Bot_Token.split(':')[0]
@@ -346,75 +317,69 @@ async def Multi_loop_async():
             if not os.path.exists(task_dl_path):
                 os.makedirs(task_dl_path)
 
+            # 1. تنزيل الفيديو الأصلي الكامل
             file = await File_Msg.download(file_name=task_dl_path)
 
-            # 1. تقطيع الفيديو إلى أجزاء (ساعة لكل جزء)
-            await reply_msg.edit_text('جارِ فحص مدة الفيديو وتقسيمه أوتوماتيكياً (إذا تجاوز الساعة)...')
+            # 2. تقسيم الفيديو مؤقتاً لأجزاء (لكفاءة WhisperX)
+            await reply_msg.edit_text('جارِ فحص مدة الفيديو وتقسيمه مؤقتاً (إذا تجاوز 60 دقيقة)...')
             chunks = await split_video_into_hour_chunks(file, task_dl_path)
             
             total_chunks = len(chunks)
-            subtitled_chunks = []
-            combined_full_srt = ""
+            combined_en_srt = ""
             
             time_offset = 0.0
             subtitle_index_offset = 0
 
-            # 2. معالجة كل جزء على حدة (استخراج -> ترجمة -> حرق -> تخزين مؤقت)
+            # 3. استخراج الترجمة الإنجليزية من كل جزء ودمجها في ملف شامل
             for idx, chunk_path in enumerate(chunks, start=1):
-                await reply_msg.edit_text(f'جارِ استخراج وترجمة الجزء ({idx}/{total_chunks}) عبر WhisperX و Gemini...')
+                await reply_msg.edit_text(f'جارِ استخراج النصوص من الجزء ({idx}/{total_chunks}) عبر WhisperX...')
                 
-                srt_file, count_added = await whisperx_transcribe_and_translate_srt(
+                chunk_duration = await get_video_duration(chunk_path)
+                
+                chunk_srt_content, count_added = await whisperx_extract_srt_chunk(
                     chunk_path, 
                     time_offset=time_offset, 
                     subtitle_index_offset=subtitle_index_offset
                 )
                 
-                # تجميع الترجمات للملف الشامل
-                with open(srt_file, 'r', encoding='utf-8') as sf:
-                    combined_full_srt += sf.read() + "\n"
+                combined_en_srt += chunk_srt_content + "\n"
                 
-                # تحديث التوقيت والفهارس للجزء التالي
-                chunk_duration = await get_video_duration(chunk_path)
                 time_offset += chunk_duration
                 subtitle_index_offset += (count_added - 1)
-                
-                # حرق الترجمة وتخزين الجزء المترجم مؤقتاً
-                await reply_msg.edit_text(f'جارِ دمج الترجمة على الجزء ({idx}/{total_chunks}) وتخزينه...')
-                subtitled_chunk = await burn_subtitles_ffmpeg(chunk_path, srt_file)
-                subtitled_chunks.append(subtitled_chunk)
-                
-                # تنظيف ملف الترجمة المؤقت الخاص بهذا الجزء
-                if os.path.exists(srt_file):
-                    os.remove(srt_file)
 
-            # حفظ ملف الترجمة الشامل المجمع وإرساله للمستخدم
-            final_full_srt_path = os.path.join(task_dl_path, "Full_Subtitles_AR.srt")
-            with open(final_full_srt_path, 'w', encoding='utf-8') as f:
-                f.write(combined_full_srt)
-            
-            await File_Msg.reply_document(final_full_srt_path, caption="ملف الترجمة العربي الشامل (SRT) ✅")
+            # حفظ ملف الترجمة الإنجليزي الشامل مؤقتاً
+            final_en_srt_path = os.path.join(task_dl_path, "Full_Subtitles_EN.srt")
+            with open(final_en_srt_path, 'w', encoding='utf-8') as f:
+                f.write(combined_en_srt)
 
-            # 3. دمج كل الأجزاء المخزنة معاً في النهاية في فيديو واحد
-            if len(subtitled_chunks) > 1:
-                await reply_msg.edit_text('جاري دمج جميع الأجزاء المترجمة معاً في فيديو نهائي واحد...')
-                final_merged_video = os.path.join(task_dl_path, "Final_Merged_Subtitled.mp4")
-                await concat_videos(subtitled_chunks, final_merged_video)
-            else:
-                final_merged_video = subtitled_chunks[0]
+            # 4. ترجمة ملف الترجمة الشامل عبر Gemini دفعة واحدة
+            await reply_msg.edit_text('جارِ ترجمة ملف الترجمة الشامل عبر Gemini (بصياغة سياقية متكاملة)...')
+            final_ar_srt_path = await translate_full_srt_with_gemini(final_en_srt_path)
 
-            # 4. إرسال الفيديو النهائي للمستخدم
+            # إرسال ملف الترجمة العربي الشامل للمستخدم
+            await File_Msg.reply_document(
+                final_ar_srt_path, 
+                caption="📄 ملف الترجمة العربي الشامل للملف بالكامل (SRT) ✅"
+            )
+
+            # 5. حرق الترجمة العربية الشاملة على الفيديو الأصلي الكامل
+            await reply_msg.edit_text('جارِ دمج وحرق الترجمة العربية على الفيديو الأصلي الكامل...')
+            final_merged_video = await burn_subtitles_ffmpeg(file, final_ar_srt_path)
+
+            # 6. إرسال الفيديو النهائي للمستخدم
             await reply_msg.edit_text('جارِ رفع الفيديو المترجم النهائي...')
             await File_Msg.reply_video(final_merged_video, caption="الفيديو المترجم بالعربية بالكامل جاهز ✅")
 
-            # تنظيف كافة الملفات المؤقتة
+            # التنظيف النهائي للملفات المؤقتة
             for ch in chunks:
-                if os.path.exists(ch): os.remove(ch)
-            for sch in subtitled_chunks:
-                if os.path.exists(sch) and sch != final_merged_video: os.remove(sch)
+                if ch != file and os.path.exists(ch): 
+                    os.remove(ch)
             if os.path.exists(final_merged_video):
                 os.remove(final_merged_video)
-            if os.path.exists(final_full_srt_path):
-                os.remove(final_full_srt_path)
+            if os.path.exists(final_en_srt_path):
+                os.remove(final_en_srt_path)
+            if os.path.exists(final_ar_srt_path):
+                os.remove(final_ar_srt_path)
             if os.path.exists(file):
                 os.remove(file)
 
