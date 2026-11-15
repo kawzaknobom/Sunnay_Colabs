@@ -4,11 +4,11 @@ nest_asyncio.apply()
 Bot_Token = os.getenv('TOKEN')
 
 from pyrogram import Client, filters, idle
-from pyrogram.types import ForceReply, ReplyKeyboardMarkup, KeyboardButton
+from pyrogram.types import ReplyKeyboardMarkup, KeyboardButton
 import cv2, shutil, numpy as np
 from ultralytics import YOLO
 
-# تحميل نموذج الـ Segmentation الخاص بيولو (يعطي أقنعة دقيقة للجسم بالكامل)
+# تحميل نموذج الـ Segmentation الخاص بيولو
 model = YOLO('yolov8n-seg.pt')
 
 Api_Id = 15952578
@@ -56,11 +56,15 @@ def Pyrogram_Client(Bot_Token):
 async def get_seconds(clock_time):
     splitted = clock_time.split(':')
     if len(splitted) == 3: 
-      hours, minutes, seconds = map(float, clock_time.split(':'))
+      hours, minutes, seconds = map(float, splitted)
     elif len(splitted) == 2: 
       minutes = float(splitted[0])
-      seconds = float(splitted[-1])
+      seconds = float(splitted[1])
       hours = 0
+    else:
+      hours = 0
+      minutes = 0
+      seconds = float(splitted[0])
     return (hours * 3600) + (minutes * 60) + seconds
 
 async def Process_Video_Pro_Segmentation(file_path, replied, BlurRate, isfull, Ranges):
@@ -86,9 +90,12 @@ async def Process_Video_Pro_Segmentation(file_path, replied, BlurRate, isfull, R
   
   ranges = []
   if not isfull and Ranges:
-    for Range in Ranges.split(' '): 
-      splitted = Range.split('-') 
-      ranges.append([int(await get_seconds(splitted[0]) * fps), int(await get_seconds(splitted[1]) * fps)])
+    for Range in Ranges.strip().split():
+      if '-' in Range:
+        splitted = Range.split('-')
+        start_sec = await get_seconds(splitted[0])
+        end_sec = await get_seconds(splitted[1])
+        ranges.append([int(start_sec * fps), int(end_sec * fps)])
 
   ret_num = 0
 
@@ -102,46 +109,40 @@ async def Process_Video_Pro_Segmentation(file_path, replied, BlurRate, isfull, R
     if not isfull:
       ispermit = False
       for x in ranges:
-        if ret_num in range(x[0], x[1]):
+        if x[0] <= ret_num <= x[1]:
           ispermit = True
           break
 
     if ret_num % int(fps) == 0 and durationInSeconds > 0:
       try:
-        await replied.edit_text(f"🎬 جاري معالجة الفيديو بالتقسيم وتوسعة الأطراف... {int(ret_num / fps)} من {int(durationInSeconds)} ثانية")
+        await replied.edit_text(f"🎬 جاري المعالجة للنطاقات المحددة... {int(ret_num / fps)} من {int(durationInSeconds)} ثانية")
       except:
         pass
 
     if ispermit:
-      # تشغيل نموذج الـ Segmentation والتتبع الاحترافي للفريمات
       results = model.track(
           frame, 
           persist=True, 
-          classes=[0],  # فئة الأشخاص فقط
+          classes=[0],  # الأشخاص فقط
           conf=0.4, 
           iou=0.4, 
           tracker="bytetrack.yaml", 
           verbose=False
       )
       
-      # إذا وُجدت أقنعة (Masks) للأشخاص في الفريم
       if results[0].masks is not None:
         masks = results[0].masks.data.cpu().numpy()
-        
-        # إنشاء نسخة معالجة للبلور على كامل الفريم
         blurred_frame = cv2.blur(frame, (BlurRate, BlurRate))
         
         for mask in masks:
           resized_mask = cv2.resize(mask, (width, height))
           binary_mask = (resized_mask > 0.3).astype(np.uint8) * 255
           
-          # توسيع القناع (Dilation) لتغطية الأطراف والأكتاف بالكامل دون فراغات
+          # توسعة القناع لتغطية الأطراف والأكتاف بالكامل
           kernel = np.ones((25, 25), np.uint8)
           dilated_mask = cv2.dilate(binary_mask, kernel, iterations=1)
           
           final_mask = (dilated_mask > 0).astype(np.uint8)
-          
-          # دمج البلور مع الفريم الأصلي بناءً على القناع المُوَسَّع
           frame = np.where(final_mask[:, :, None] == 1, blurred_frame, frame)
 
     out.write(frame)
@@ -159,7 +160,7 @@ Dl_Dir = f'./ProSeg_{Bot_Identifier}/'
 async def command_start(bot, message):
    Settings_Dict.clear()
    await message.reply_text(
-    "👋 أهلاً بك في بوت العزل الاحترافي (Segmentation).\nاختر درجة البلور المطلوبة:",
+    "👋 أهلاً بك في بوت العزل الاحترافي.\nاختر درجة البلور المطلوبة:",
     reply_markup=ReplyKeyboardMarkup([
         [KeyboardButton("11"), KeyboardButton("31")],
         [KeyboardButton("109"), KeyboardButton("185")],
@@ -173,27 +174,29 @@ async def _text_handler(client, message):
   if User_Id not in Settings_Dict: 
     Settings_Dict[User_Id] = {'BlurRate': '', 'isfull': True, 'Ranges': ''}
   
-  if message.text in ['11', '31', '109', '185', '261', '491']:
-    Settings_Dict[User_Id]['BlurRate'] = message.text 
+  text = message.text.strip()
+
+  if text in ['11', '31', '109', '185', '261', '491']:
+    Settings_Dict[User_Id]['BlurRate'] = text 
     await message.reply_text(
         "اختر نمط المعالجة:",
         reply_markup=ReplyKeyboardMarkup([
             [KeyboardButton("Full Vid"), KeyboardButton("Ranges")]
         ], resize_keyboard=True)
     )
-  elif message.text == 'Full Vid':
+  elif text == 'Full Vid':
     Settings_Dict[User_Id]['isfull'] = True
     await message.reply("✅ تم الحفظ. أرسل الفيديو الآن للمعالجة!")
-  elif message.text == 'Ranges':
+  elif text == 'Ranges':
     Settings_Dict[User_Id]['isfull'] = False
-    await message.reply("أرسل النطاق الزمني بصيغة:\n`hh:mm:ss-hh:mm:ss`", reply_markup=ForceReply(True))
-
-@bot.on_message(filters.private & filters.reply & filters.text)
-async def _ranges_reply_handler(client, message):
-  User_Id = message.from_user.id
-  if User_Id in Settings_Dict:
-    Settings_Dict[User_Id]['Ranges'] = message.text
-    await message.reply("✅ تم حفظ النطاق. أرسل الفيديو الآن!")
+    await message.reply("أرسل الآن النطاقات الزمنية في رسالة واحدة مباشرة:\nمثال:\n`00:00-00:49 1:20-1:31`", reply_markup=ReplyKeyboardMarkup([[KeyboardButton("إلغاء")]], resize_keyboard=True))
+  elif not Settings_Dict[User_Id]['isfull'] and '-' in text:
+    Settings_Dict[User_Id]['Ranges'] = text
+    await message.reply("✅ تم حفظ جميع النطاقات بنجاح. أرسل الفيديو الآن!", reply_markup=ReplyKeyboardMarkup([
+        [KeyboardButton("Full Vid"), KeyboardButton("Ranges")]
+    ], resize_keyboard=True))
+  else:
+    await message.reply("⚠️ يرجى اختيار درجة البلور أو نمط المعالجة الصحيح من الأزرار.")
 
 @bot.on_message(filters.private & filters.incoming & filters.video)
 async def _video_handler(client, message):
@@ -203,7 +206,7 @@ async def _video_handler(client, message):
     return
 
   cfg = Settings_Dict[User_Id]
-  replied = await message.reply('🚀 جاري تحميل الفيديو وبدء التقسيم والعزل الاحترافي...')
+  replied = await message.reply('🚀 جاري تحميل الفيديو ومعالجة النطاقات المحددة بدقة...')
   Vid_Path = await message.download(file_name=Dl_Dir)
   
   try:
@@ -218,7 +221,7 @@ async def _video_handler(client, message):
 def main():
     if not os.path.exists(Dl_Dir): os.makedirs(Dl_Dir)
     bot.start()
-    print("✅ Pro Segmentation Bot is ONLINE!")
+    print("✅ Pro Segmentation Bot with Direct Ranges is ONLINE!")
     idle()
     bot.stop()
 
