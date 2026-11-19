@@ -1,225 +1,342 @@
-import nest_asyncio, os, asyncio
+import nest_asyncio, os, asyncio, shutil
 nest_asyncio.apply()
 
 Bot_Token = os.getenv('TOKEN')
 
 from pyrogram import Client, filters, idle
 from pyrogram.types import ReplyKeyboardMarkup, KeyboardButton
-import cv2, shutil, numpy as np
+import cv2, numpy as np
 from ultralytics import YOLO
 
-# تحميل نموذج الـ Segmentation الخاص بيولو
-model = YOLO('yolov8n-seg.pt')
+# تحميل نموذج الـ Segmentation (يُنصح بـ yolov8m-seg.pt أو yolo11m-seg.pt لدقة أعلى من nano)
+model = YOLO('yolov8m-seg.pt')
 
 Api_Id = 15952578
 Api_Hash = '3600ce5f8f9b9e18cba0f318fa0e3600'
 Audio_Forms = (".mp3", ".ogg", ".m4a", ".aac", ".flac", ".wav", ".wma", ".opus", ".3gpp")
 
 Settings_Dict = {}
+Base_Dl_Dir = './ProSeg_Work'
+
+def odd_blur_size(val: int) -> int:
+    val = max(3, int(val))
+    return val if val % 2 == 1 else val + 1
+
+async def run_cmd(cmd: str):
+    proc = await asyncio.create_subprocess_shell(
+        cmd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE
+    )
+    _, stderr = await proc.communicate()
+    if proc.returncode != 0:
+        raise RuntimeError(f"FFmpeg error: {stderr.decode(errors='ignore')[-400:]}")
 
 async def Create_Dir(Dir):
-  if not os.path.isdir(Dir):
     os.makedirs(Dir, exist_ok=True)
 
 async def Check_Dir(Dir):
-  if os.path.isdir(Dir):
-      shutil.rmtree(Dir)
-  await Create_Dir(Dir)
+    if os.path.isdir(Dir):
+        shutil.rmtree(Dir, ignore_errors=True)
 
 async def Mp3_Conv(File):
-  mainDir = '/'.join(File.split('/')[:-1]) + '/'
-  Mp3_File = mainDir + File.split('/')[-1].split('.')[0] + '_Conv.mp3'
-  os.system(f'ffmpeg -i "{File}" -q:a 0 -map a "{Mp3_File}" -y')
-  return Mp3_File
+    base_no_ext, _ = os.path.splitext(File)
+    Mp3_File = f"{base_no_ext}_Conv.mp3"
+    await run_cmd(f'ffmpeg -y -i "{File}" -vn -q:a 2 "{Mp3_File}"')
+    return Mp3_File
 
 async def Media_Compress(file_path, Rate=None):
-  mainDir = '/'.join(file_path.split('/')[:-1]) + '/'
-  if file_path.lower().endswith(Audio_Forms): 
-   Res_File = mainDir + file_path.split('/')[-1].split('.')[0] + '_Comp.mp3'
-   Comp_Cmd = f'ffmpeg -i "{file_path}" -b:a "{Rate}" "{Res_File}" -y '
-  else:
-    Res_File = mainDir + file_path.split('/')[-1].split('.')[0] + '_Comp.mp4'
-    Comp_Cmd = f'ffmpeg -i "{file_path}" -c:v libx264 -crf 28 "{Res_File}" -y'
-  os.system(Comp_Cmd)
-  return Res_File
+    base_no_ext, _ = os.path.splitext(file_path)
+    if file_path.lower().endswith(Audio_Forms):
+        bitrate = Rate or "192k"
+        Res_File = f"{base_no_ext}_Comp.mp3"
+        Cmd = f'ffmpeg -y -i "{file_path}" -b:a "{bitrate}" "{Res_File}"'
+    else:
+        Res_File = f"{base_no_ext}_Comp.mp4"
+        Cmd = f'ffmpeg -y -i "{file_path}" -c:v libx264 -preset fast -crf 23 -c:a aac -b:a 128k "{Res_File}"'
+    await run_cmd(Cmd)
+    return Res_File
 
 async def Vid_Mk(Vid, Aud):
-  mainDir = '/'.join(Vid.split('/')[:-1]) + '/'
-  Vid_Res = mainDir + Vid.split('/')[-1].split('.')[0] + '_Merged.mp4'
-  os.system(f'ffmpeg -i "{Vid}" -i "{Aud}" -c:v copy -c:a aac -map 0:v:0 -map 1:a:0 "{Vid_Res}" -y')
-  return Vid_Res
+    base_no_ext, _ = os.path.splitext(Vid)
+    Vid_Res = f"{base_no_ext}_Merged.mp4"
+    if Aud and os.path.exists(Aud) and os.path.getsize(Aud) > 0:
+        Cmd = (
+            f'ffmpeg -y -i "{Vid}" -i "{Aud}" '
+            f'-c:v libx264 -preset fast -crf 23 -pix_fmt yuv420p '
+            f'-c:a aac -b:a 128k -map 0:v:0 -map 1:a:0 -shortest "{Vid_Res}"'
+        )
+    else:
+        Cmd = (
+            f'ffmpeg -y -i "{Vid}" '
+            f'-c:v libx264 -preset fast -crf 23 -pix_fmt yuv420p "{Vid_Res}"'
+        )
+    await run_cmd(Cmd)
+    return Vid_Res
 
 def Pyrogram_Client(Bot_Token):
-  Bot_Identifier = Bot_Token.split(':')[0]
-  return Client(Bot_Identifier + '_session_seg_bot', api_id=Api_Id, api_hash=Api_Hash, bot_token=Bot_Token), Bot_Identifier
+    Bot_Identifier = Bot_Token.split(':')[0]
+    return Client(
+        Bot_Identifier + '_session_seg_bot',
+        api_id=Api_Id,
+        api_hash=Api_Hash,
+        bot_token=Bot_Token
+    ), Bot_Identifier
 
 async def get_seconds(clock_time):
-    splitted = clock_time.split(':')
-    if len(splitted) == 3: 
-      hours, minutes, seconds = map(float, splitted)
-    elif len(splitted) == 2: 
-      minutes = float(splitted[0])
-      seconds = float(splitted[1])
-      hours = 0
+    parts = clock_time.strip().split(':')
+    if len(parts) == 3:
+        hours, minutes, seconds = map(float, parts)
+    elif len(parts) == 2:
+        hours = 0.0
+        minutes, seconds = map(float, parts)
     else:
-      hours = 0
-      minutes = 0
-      seconds = float(splitted[0])
-    return (hours * 3600) + (minutes * 60) + seconds
+        hours = 0.0
+        minutes = 0.0
+        seconds = float(parts[0])
+    return (hours * 3600.0) + (minutes * 60.0) + seconds
+
+def refine_person_mask(combined_mask: np.ndarray, width: int, height: int) -> np.ndarray:
+    """توسيع وتنعيم القناع لتقليل الفلتات على الحواف والحركة السريعة."""
+    binary = (combined_mask > 0.25).astype(np.uint8) * 255
+    close_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (11, 11))
+    dilate_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (31, 31))
+    closed = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, close_kernel)
+    dilated = cv2.dilate(closed, dilate_kernel, iterations=1)
+    soft = cv2.GaussianBlur(dilated, (15, 15), 0).astype(np.float32) / 255.0
+    return np.clip(soft, 0.0, 1.0)
 
 async def Process_Video_Pro_Segmentation(file_path, replied, BlurRate, isfull, Ranges):
-  BlurRate = int(BlurRate)
-  mainDir = '/'.join(file_path.split('/')[:-1]) + '/'
-  P_Name = mainDir + file_path.split('/')[-1].split('.')[0]
-  Ex = file_path.split('.')[-1]
-  Res_File = f"{P_Name}_ProBlurred.{Ex}"
-  
-  Aud = await Mp3_Conv(file_path)
-  compressed_path = await Media_Compress(file_path)
-  
-  cap = cv2.VideoCapture(compressed_path)
-  if not cap.isOpened():
-    raise ValueError("Error opening video file")
-  
-  fps = cap.get(cv2.CAP_PROP_FPS)
-  totalNoFrames = cap.get(cv2.CAP_PROP_FRAME_COUNT)
-  durationInSeconds = totalNoFrames // fps
-  width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-  height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-  out = cv2.VideoWriter(Res_File, cv2.VideoWriter_fourcc(*'mp4v'), fps, (width, height))
-  
-  ranges = []
-  if not isfull and Ranges:
-    for Range in Ranges.strip().split():
-      if '-' in Range:
-        splitted = Range.split('-')
-        start_sec = await get_seconds(splitted[0])
-        end_sec = await get_seconds(splitted[1])
-        ranges.append([int(start_sec * fps), int(end_sec * fps)])
+    ksize = odd_blur_size(BlurRate)
+    base_no_ext, _ = os.path.splitext(file_path)
+    raw_out_path = f"{base_no_ext}_RawBlur.mp4"
 
-  ret_num = 0
+    Aud = None
+    try:
+        Aud = await Mp3_Conv(file_path)
+    except Exception:
+        Aud = None
 
-  while cap.isOpened():
-    ret, frame = cap.read()
-    if not ret:
-      break
-    ret_num += 1
-    
-    ispermit = True
-    if not isfull:
-      ispermit = False
-      for x in ranges:
-        if x[0] <= ret_num <= x[1]:
-          ispermit = True
-          break
+    cap = cv2.VideoCapture(file_path)
+    if not cap.isOpened():
+        raise ValueError("تعذر فتح ملف الفيديو.")
 
-    if ret_num % int(fps) == 0 and durationInSeconds > 0:
-      try:
-        await replied.edit_text(f"🎬 جاري المعالجة للنطاقات المحددة... {int(ret_num / fps)} من {int(durationInSeconds)} ثانية")
-      except:
-        pass
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    if not fps or fps <= 1:
+        fps = 25.0
+    progress_step = max(1, int(round(fps)))
 
-    if ispermit:
-      results = model.track(
-          frame, 
-          persist=True, 
-          classes=[0],  # الأشخاص فقط
-          conf=0.4, 
-          iou=0.4, 
-          tracker="bytetrack.yaml", 
-          verbose=False
-      )
-      
-      if results[0].masks is not None:
-        masks = results[0].masks.data.cpu().numpy()
-        blurred_frame = cv2.blur(frame, (BlurRate, BlurRate))
-        
-        for mask in masks:
-          resized_mask = cv2.resize(mask, (width, height))
-          binary_mask = (resized_mask > 0.3).astype(np.uint8) * 255
-          
-          # توسعة القناع لتغطية الأطراف والأكتاف بالكامل
-          kernel = np.ones((25, 25), np.uint8)
-          dilated_mask = cv2.dilate(binary_mask, kernel, iterations=1)
-          
-          final_mask = (dilated_mask > 0).astype(np.uint8)
-          frame = np.where(final_mask[:, :, None] == 1, blurred_frame, frame)
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+    duration_sec = total_frames / fps if total_frames > 0 else 0
+    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
-    out.write(frame)
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    out = cv2.VideoWriter(raw_out_path, fourcc, fps, (width, height))
 
-  cap.release()
-  out.release()
-  
-  Final_Res = await Vid_Mk(Res_File, Aud)
-  return await Media_Compress(Final_Res)
+    ranges = []
+    if not isfull and Ranges:
+        for rng in Ranges.strip().split():
+            if '-' in rng:
+                s_str, e_str = rng.split('-', 1)
+                start_f = int(await get_seconds(s_str) * fps)
+                end_f = int(await get_seconds(e_str) * fps)
+                if end_f >= start_f:
+                    ranges.append((start_f, end_f))
+
+    # عدد الفريمات التي نرجع للخلف لتغطيتها قبل ظهور الشخص (~0.25 ثانية)
+    pre_roll_frames = max(4, int(round(fps * 0.25)))
+    # عدد الفريمات التي نحتفظ فيها بالقناع بعد اختفائه مؤقتاً (~0.25 ثانية)
+    max_hold_frames = max(4, int(round(fps * 0.25)))
+
+    last_alpha = np.zeros((height, width), dtype=np.float32)
+    hold_counter = 0
+    buffer = []
+
+    def write_buffered_item(item):
+        buf_frame, buf_alpha = item
+        if np.any(buf_alpha > 0.01):
+            blurred_frame = cv2.blur(buf_frame, (ksize, ksize))
+            alpha_3c = buf_alpha[:, :, None]
+            merged = (blurred_frame * alpha_3c + buf_frame * (1.0 - alpha_3c)).astype(np.uint8)
+            out.write(merged)
+        else:
+            out.write(buf_frame)
+
+    ret_num = 0
+
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break
+        ret_num += 1
+
+        ispermit = True
+        if not isfull:
+            ispermit = any(start_f <= ret_num <= end_f for start_f, end_f in ranges)
+
+        if ret_num % progress_step == 0 and duration_sec > 0:
+            cur_sec = min(int(ret_num / fps), int(duration_sec))
+            try:
+                await replied.edit_text(f"🎬 جاري المعالجة... {cur_sec} من {int(duration_sec)} ثانية")
+            except Exception:
+                pass
+
+        if ispermit:
+            results = model.track(
+                frame,
+                persist=True,
+                classes=[0],
+                conf=0.28,
+                iou=0.45,
+                imgsz=640,
+                retina_masks=True,
+                tracker="bytetrack.yaml",
+                verbose=False
+            )
+
+            current_mask = np.zeros((height, width), dtype=np.float32)
+            if results and results[0].masks is not None:
+                masks = results[0].masks.data.cpu().numpy()
+                for m in masks:
+                    if m.shape != (height, width):
+                        m = cv2.resize(m, (width, height), interpolation=cv2.INTER_LINEAR)
+                    current_mask = np.maximum(current_mask, m)
+
+            if np.any(current_mask > 0.25):
+                hold_counter = max_hold_frames
+                alpha = refine_person_mask(current_mask, width, height)
+                alpha = np.maximum(alpha, last_alpha * 0.7)
+                last_alpha = alpha
+
+                # توسيع القناع للخلف على الفريمات السابقة في الـ buffer
+                buf_len = len(buffer)
+                lookback = min(pre_roll_frames, buf_len)
+                for i in range(1, lookback + 1):
+                    idx = buf_len - i
+                    back_weight = max(0.35, 1.0 - (i / (pre_roll_frames + 1)) * 0.65)
+                    prev_f, prev_a = buffer[idx]
+                    updated_a = np.maximum(prev_a, alpha * back_weight)
+                    buffer[idx] = (prev_f, updated_a)
+
+            elif hold_counter > 0:
+                hold_counter -= 1
+                decay = (hold_counter + 1) / (max_hold_frames + 1)
+                alpha = last_alpha * decay
+                last_alpha = alpha
+            else:
+                alpha = np.zeros((height, width), dtype=np.float32)
+                last_alpha = alpha
+        else:
+            alpha = np.zeros((height, width), dtype=np.float32)
+            last_alpha = alpha
+            hold_counter = 0
+
+        buffer.append((frame, alpha))
+
+        while len(buffer) > pre_roll_frames + 1:
+            write_buffered_item(buffer.pop(0))
+
+    while buffer:
+        write_buffered_item(buffer.pop(0))
+
+    cap.release()
+    out.release()
+
+    final_vid = await Vid_Mk(raw_out_path, Aud)
+    return final_vid
 
 bot, Bot_Identifier = Pyrogram_Client(Bot_Token)
-Dl_Dir = f'./ProSeg_{Bot_Identifier}/'
+
+def get_user_cfg(user_id: int) -> dict:
+    if user_id not in Settings_Dict:
+        Settings_Dict[user_id] = {'BlurRate': '', 'isfull': True, 'Ranges': ''}
+    return Settings_Dict[user_id]
 
 @bot.on_message(filters.command('start') & filters.private)
-async def command_start(bot, message):
-   Settings_Dict.clear()
-   await message.reply_text(
-    "👋 أهلاً بك في بوت العزل الاحترافي.\nاختر درجة البلور المطلوبة:",
-    reply_markup=ReplyKeyboardMarkup([
-        [KeyboardButton("11"), KeyboardButton("31")],
-        [KeyboardButton("109"), KeyboardButton("185")],
-        [KeyboardButton("261"), KeyboardButton("491")]
-    ], resize_keyboard=True)
-   )
+async def command_start(client, message):
+    user_id = message.from_user.id
+    Settings_Dict[user_id] = {'BlurRate': '', 'isfull': True, 'Ranges': ''}
+    await message.reply_text(
+        "👋 أهلاً بك في بوت العزل الاحترافي.\nاختر درجة البلور المطلوبة:",
+        reply_markup=ReplyKeyboardMarkup([
+            [KeyboardButton("11"), KeyboardButton("31")],
+            [KeyboardButton("109"), KeyboardButton("185")],
+            [KeyboardButton("261"), KeyboardButton("491")]
+        ], resize_keyboard=True)
+    )
 
 @bot.on_message(filters.private & filters.incoming & filters.text)
 async def _text_handler(client, message):
-  User_Id = message.from_user.id
-  if User_Id not in Settings_Dict: 
-    Settings_Dict[User_Id] = {'BlurRate': '', 'isfull': True, 'Ranges': ''}
-  
-  text = message.text.strip()
+    user_id = message.from_user.id
+    cfg = get_user_cfg(user_id)
+    text = message.text.strip()
 
-  if text in ['11', '31', '109', '185', '261', '491']:
-    Settings_Dict[User_Id]['BlurRate'] = text 
-    await message.reply_text(
-        "اختر نمط المعالجة:",
-        reply_markup=ReplyKeyboardMarkup([
-            [KeyboardButton("Full Vid"), KeyboardButton("Ranges")]
-        ], resize_keyboard=True)
-    )
-  elif text == 'Full Vid':
-    Settings_Dict[User_Id]['isfull'] = True
-    await message.reply("✅ تم الحفظ. أرسل الفيديو الآن للمعالجة!")
-  elif text == 'Ranges':
-    Settings_Dict[User_Id]['isfull'] = False
-    await message.reply("أرسل الآن النطاقات الزمنية في رسالة واحدة مباشرة:\nمثال:\n`00:00-00:49 1:20-1:31`", reply_markup=ReplyKeyboardMarkup([[KeyboardButton("إلغاء")]], resize_keyboard=True))
-  elif not Settings_Dict[User_Id]['isfull'] and '-' in text:
-    Settings_Dict[User_Id]['Ranges'] = text
-    await message.reply("✅ تم حفظ جميع النطاقات بنجاح. أرسل الفيديو الآن!", reply_markup=ReplyKeyboardMarkup([
-        [KeyboardButton("Full Vid"), KeyboardButton("Ranges")]
-    ], resize_keyboard=True))
-  else:
-    await message.reply("⚠️ يرجى اختيار درجة البلور أو نمط المعالجة الصحيح من الأزرار.")
+    if text == "إلغاء":
+        cfg['isfull'] = True
+        cfg['Ranges'] = ''
+        await message.reply_text(
+            "تم الإلغاء والعودة إلى وضع الفيديو الكامل.",
+            reply_markup=ReplyKeyboardMarkup([
+                [KeyboardButton("Full Vid"), KeyboardButton("Ranges")]
+            ], resize_keyboard=True)
+        )
+        return
+
+    if text in ['11', '31', '109', '185', '261', '491']:
+        cfg['BlurRate'] = text
+        await message.reply_text(
+            "اختر نمط المعالجة:",
+            reply_markup=ReplyKeyboardMarkup([
+                [KeyboardButton("Full Vid"), KeyboardButton("Ranges")]
+            ], resize_keyboard=True)
+        )
+    elif text == 'Full Vid':
+        cfg['isfull'] = True
+        await message.reply_text("✅ تم الحفظ. أرسل الفيديو الآن للمعالجة!")
+    elif text == 'Ranges':
+        cfg['isfull'] = False
+        await message.reply_text(
+            "أرسل الآن النطاقات الزمنية في رسالة واحدة مباشرة:\nمثال:\n`00:00-00:49 1:20-1:31`",
+            reply_markup=ReplyKeyboardMarkup([[KeyboardButton("إلغاء")]], resize_keyboard=True)
+        )
+    elif not cfg['isfull'] and '-' in text:
+        cfg['Ranges'] = text
+        await message.reply_text(
+            "✅ تم حفظ جميع النطاقات بنجاح. أرسل الفيديو الآن!",
+            reply_markup=ReplyKeyboardMarkup([
+                [KeyboardButton("Full Vid"), KeyboardButton("Ranges")]
+            ], resize_keyboard=True)
+        )
+    else:
+        await message.reply_text("⚠️ يرجى اختيار درجة البلور أو نمط المعالجة الصحيح من الأزرار.")
 
 @bot.on_message(filters.private & filters.incoming & filters.video)
 async def _video_handler(client, message):
-  User_Id = message.from_user.id
-  if User_Id not in Settings_Dict or not Settings_Dict[User_Id]['BlurRate']:
-    await message.reply('⚠️ يرجى إعادة ضبط الإعدادات بالضغط على: /start')
-    return
+    user_id = message.from_user.id
+    cfg = get_user_cfg(user_id)
+    if not cfg['BlurRate']:
+        await message.reply_text('⚠️ يرجى إعادة ضبط الإعدادات بالضغط على: /start')
+        return
 
-  cfg = Settings_Dict[User_Id]
-  replied = await message.reply('🚀 جاري تحميل الفيديو ومعالجة النطاقات المحددة بدقة...')
-  Vid_Path = await message.download(file_name=Dl_Dir)
-  
-  try:
-    Blurred_Vid = await Process_Video_Pro_Segmentation(Vid_Path, replied, cfg['BlurRate'], cfg['isfull'], cfg['Ranges'])
-    await replied.edit_text('✅ تمت العملية باحترافية تامة!')
-    await message.reply_video(Blurred_Vid)
-  except Exception as e:
-    await replied.edit_text(f'❌ حدث خطأ: {str(e)}')
-  finally:
-    await Check_Dir(Dl_Dir)
+    user_dir = os.path.join(Base_Dl_Dir, f"{Bot_Identifier}_{user_id}")
+    await Create_Dir(user_dir)
+    replied = await message.reply_text('🚀 جاري تحميل الفيديو ومعالجة النطاقات المحددة بدقة...')
+
+    try:
+        vid_path = await message.download(file_name=os.path.join(user_dir, ""))
+        blurred_vid = await Process_Video_Pro_Segmentation(
+            vid_path, replied, cfg['BlurRate'], cfg['isfull'], cfg['Ranges']
+        )
+        await replied.edit_text('✅ تمت العملية باحترافية تامة!')
+        await message.reply_video(blurred_vid)
+    except Exception as e:
+        await replied.edit_text(f'❌ حدث خطأ: {str(e)}')
+    finally:
+        await Check_Dir(user_dir)
 
 def main():
-    if not os.path.exists(Dl_Dir): os.makedirs(Dl_Dir)
+    os.makedirs(Base_Dl_Dir, exist_ok=True)
     bot.start()
     print("✅ Pro Segmentation Bot with Direct Ranges is ONLINE!")
     idle()
