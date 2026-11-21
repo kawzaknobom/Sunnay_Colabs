@@ -14,7 +14,7 @@ from transformers import AutoImageProcessor, AutoModelForImageClassification
 # تحميل نموذج الـ Segmentation الأساسي
 model = YOLO('yolov8m-seg.pt')
 
-# كاشف وجه خفيف وسريع (YuNet) مع بديل تلقائي للجزء العلوي للرأس/الوجه
+# كاشف وجه خفيف وسريع (YuNet)
 YUNET_PATH = os.getenv('YUNET_PATH', 'face_detection_yunet_2023mar.onnx')
 yunet_detector = None
 
@@ -31,10 +31,14 @@ def _init_yunet():
 
 _init_yunet()
 
-# النموذج الأول: متخصص في الوجه (يُفحص أولاً)
+# النموذج الأول: متخصص في الوجه (يُفحص أولاً عند وضوح الوجه)
 FACE_MODEL_ID = os.getenv('FACE_MODEL_ID', 'dima806/fairface_gender_image_detection')
-# النموذج الثاني: متخصص في الجسد (يُفحص فقط إذا لم يطابق الوجه الجندر المطلوب)
+# النموذج الثاني: متخصص في الجسد (يُفحص عند عدم وضوح الوجه أو ضعف ثقة الوجه أو عدم المطابقة)
 BODY_MODEL_ID = os.getenv('BODY_MODEL_ID', 'NTQAI/pedestrian_gender_recognition')
+
+# عتبات الثقة القابلة للضبط
+FACE_MIN_CONFIDENCE = float(os.getenv('FACE_MIN_CONFIDENCE', '0.68'))
+BODY_MIN_CONFIDENCE = float(os.getenv('BODY_MIN_CONFIDENCE', '0.55'))
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -170,7 +174,10 @@ def refine_person_mask(combined_mask: np.ndarray, width: int, height: int) -> np
     return np.clip(soft, 0.0, 1.0)
 
 def extract_body_and_face(frame: np.ndarray, mask_2d: np.ndarray, pad: int = 10):
-    """إرجاع قصاصة الجسم الكامل وقصاصة الوجه/الرأس."""
+    """
+    إرجاع قصاصة الجسم الكامل وقصاصة الوجه إذا تم اكتشافه بوضوح عبر YuNet.
+    إذا لم يجد YuNet وجهاً واضحاً، تكون face_detected=False لتوجيه الفحص للجسد.
+    """
     h, w = mask_2d.shape
     ys, xs = np.where(mask_2d > 0.15)
     if len(xs) == 0 or len(ys) == 0:
@@ -186,37 +193,49 @@ def extract_body_and_face(frame: np.ndarray, mask_2d: np.ndarray, pad: int = 10)
 
     body_crop = frame[y1:y2, x1:x2]
     face_crop = None
+    face_detected = False
 
     if yunet_detector is not None:
         try:
             yunet_detector.setInputSize((pw, ph))
             _, faces = yunet_detector.detect(body_crop)
             if faces is not None and len(faces) > 0:
-                best = max(faces, key=lambda f: f[2] * f[3] * f[14])
+                # اختيار أوضح وأكبر وجه بناءً على المساحة × درجة كشف الوجه
+                best = max(faces, key=lambda f: f[2] * f[3] * max(0.01, float(f[14])))
+                det_score = float(best[14])
                 fx, fy, fw, fh = int(best[0]), int(best[1]), int(best[2]), int(best[3])
-                pad_x = max(5, int(0.30 * fw))
-                pad_top = max(6, int(0.35 * fh))
-                pad_bot = max(5, int(0.20 * fh))
-                gx1 = max(0, fx - pad_x)
-                gy1 = max(0, fy - pad_top)
-                gx2 = min(pw, fx + fw + pad_x)
-                gy2 = min(ph, fy + fh + pad_bot)
-                if gx2 - gx1 >= 16 and gy2 - gy1 >= 16:
-                    face_crop = body_crop[gy1:gy2, gx1:gx2]
+                if fw >= 20 and fh >= 20 and det_score >= 0.60:
+                    pad_x = max(5, int(0.30 * fw))
+                    pad_top = max(6, int(0.35 * fh))
+                    pad_bot = max(5, int(0.20 * fh))
+                    gx1 = max(0, fx - pad_x)
+                    gy1 = max(0, fy - pad_top)
+                    gx2 = min(pw, fx + fw + pad_x)
+                    gy2 = min(ph, fy + fh + pad_bot)
+                    if gx2 - gx1 >= 20 and gy2 - gy1 >= 20:
+                        face_crop = body_crop[gy1:gy2, gx1:gx2]
+                        face_detected = True
         except Exception:
             face_crop = None
+            face_detected = False
 
-    if face_crop is None:
-        head_h = max(16, int(ph * 0.32))
-        head_w = max(16, int(pw * 0.62))
-        cx = pw // 2
-        gx1 = max(0, cx - head_w // 2)
-        gx2 = min(pw, cx + head_w // 2)
-        gy2 = min(ph, head_h)
-        if gx2 - gx1 >= 16 and gy2 >= 16:
-            face_crop = body_crop[0:gy2, gx1:gx2]
+    # قص احتياطي علوي يُستخدم فقط إذا لم يكن نموذج الجسد متاحاً أصلاً
+    fallback_head_crop = None
+    head_h = max(16, int(ph * 0.32))
+    head_w = max(16, int(pw * 0.62))
+    cx = pw // 2
+    gx1 = max(0, cx - head_w // 2)
+    gx2 = min(pw, cx + head_w // 2)
+    gy2 = min(ph, head_h)
+    if gx2 - gx1 >= 16 and gy2 >= 16:
+        fallback_head_crop = body_crop[0:gy2, gx1:gx2]
 
-    return {"body": body_crop, "face": face_crop}
+    return {
+        "body": body_crop,
+        "face": face_crop,
+        "fallback_head": fallback_head_crop,
+        "face_detected": face_detected
+    }
 
 def _label_to_gender(raw_label: str, idx: int) -> str:
     low = str(raw_label).strip().lower()
@@ -226,10 +245,13 @@ def _label_to_gender(raw_label: str, idx: int) -> str:
         return "male"
     return "female" if idx == 1 else "male"
 
-def _predict_single_model(crops: list, mdl, proc, tag: str) -> list:
-    """تشغيل نموذج واحد على قائمة صور وإرجاع قائمة تسميات ('male' / 'female' / 'unknown')."""
+def _predict_single_model(crops: list, mdl, proc, tag: str):
+    """
+    تشغيل نموذج واحد على قائمة صور وإرجاع قائمة من الأزواج:
+    (label: 'male'/'female'/'unknown', confidence: float بين 0.0 و 1.0).
+    """
     if mdl is None or proc is None:
-        return ["unknown"] * len(crops)
+        return [("unknown", 0.0)] * len(crops)
 
     valid_indices = []
     pil_images = []
@@ -238,9 +260,9 @@ def _predict_single_model(crops: list, mdl, proc, tag: str) -> list:
             valid_indices.append(i)
             pil_images.append(Image.fromarray(cv2.cvtColor(c, cv2.COLOR_BGR2RGB)))
 
-    out_labels = ["unknown"] * len(crops)
+    results_out = [("unknown", 0.0)] * len(crops)
     if not pil_images:
-        return out_labels
+        return results_out
 
     try:
         inputs = proc(images=pil_images, return_tensors="pt")
@@ -250,7 +272,7 @@ def _predict_single_model(crops: list, mdl, proc, tag: str) -> list:
             probs = torch.softmax(outputs.logits, dim=-1).cpu().numpy()
     except Exception as e:
         print(f"⚠️ {tag} inference error: {e}")
-        return out_labels
+        return results_out
 
     id2label = getattr(mdl.config, "id2label", {}) or {}
     female_cols = [i for i in range(probs.shape[1]) if _label_to_gender(id2label.get(i, str(i)), i) == "female"]
@@ -260,49 +282,96 @@ def _predict_single_model(crops: list, mdl, proc, tag: str) -> list:
         row = probs[row_idx]
         f_score = float(row[female_cols].sum()) if female_cols else 0.0
         m_score = float(row[male_cols].sum()) if male_cols else 0.0
-        out_labels[orig_idx] = "female" if f_score >= m_score else "male"
+        total = f_score + m_score
+        if total <= 1e-6:
+            results_out[orig_idx] = ("unknown", 0.0)
+            continue
 
-    return out_labels
+        f_norm = f_score / total
+        m_norm = m_score / total
+        if f_norm >= m_norm:
+            results_out[orig_idx] = ("female", f_norm)
+        else:
+            results_out[orig_idx] = ("male", m_norm)
+
+    return results_out
 
 def classify_sequential_with_early_exit(samples: list, target_gender: str) -> list:
     """
-    يفحص الوجه أولاً:
-    - إذا أعطى الجندر المطلوب (مثلاً female) -> يتوقف فوراً ولا يشغّل نموذج الجسد.
-    - إذا لم يعطِ الجندر المطلوب -> يشغّل نموذج الجسد؛ فإن أعطى المطلوب يعتمدة فوراً، وإلا يأخذ نتيجته.
+    - إذا كان الوجه واضحاً (face_detected=True): يفحص الوجه أولاً.
+      * إذا أعطى الجندر المطلوب وثقته >= FACE_MIN_CONFIDENCE -> يخرج فوراً (Early-Exit).
+      * إذا كانت ثقة الوجه ضعيفة (< FACE_MIN_CONFIDENCE) أو لم يطابق الجندر المطلوب -> يفحص الجسد.
+    - إذا كان الوجه غير واضح (face_detected=False): ينتقل مباشرةً لفحص الجسد (إن توفر).
     """
     if not samples:
         return []
 
-    face_crops = [s.get("face") for s in samples]
-    face_preds = _predict_single_model(face_crops, face_model, face_processor, "FaceModel")
+    final_preds = ["unknown"] * len(samples)
+    face_check_indices = []
+    face_check_crops = []
+    direct_body_indices = []
+    direct_body_crops = []
 
-    final_preds = list(face_preds)
-    need_body_indices = []
-    need_body_crops = []
-
-    for i, f_lbl in enumerate(face_preds):
-        if target_gender in ("female", "male"):
-            if f_lbl == target_gender:
-                print(f"⚡ Early-exit [Face={f_lbl}] -> {target_gender} (skip BodyModel)")
-                continue
+    for i, s in enumerate(samples):
+        if s.get("face_detected") and s.get("face") is not None and face_model is not None:
+            face_check_indices.append(i)
+            face_check_crops.append(s["face"])
         else:
-            if f_lbl != "unknown":
-                continue
+            b_crop = s.get("body")
+            if b_crop is not None and getattr(b_crop, "size", 0) > 0 and body_model is not None:
+                direct_body_indices.append(i)
+                direct_body_crops.append(b_crop)
+            elif s.get("fallback_head") is not None and face_model is not None:
+                face_check_indices.append(i)
+                face_check_crops.append(s["fallback_head"])
 
-        b_crop = samples[i].get("body")
-        if b_crop is not None and getattr(b_crop, "size", 0) > 0 and body_model is not None:
-            need_body_indices.append(i)
-            need_body_crops.append(b_crop)
+    face_preds_map = {}
+    need_body_from_face_indices = []
+    need_body_from_face_crops = []
 
-    if need_body_crops:
-        body_preds = _predict_single_model(need_body_crops, body_model, body_processor, "BodyModel")
-        for idx, b_lbl in zip(need_body_indices, body_preds):
-            f_lbl = face_preds[idx]
-            if b_lbl != "unknown":
-                final_preds[idx] = b_lbl
-            elif f_lbl == "unknown":
-                final_preds[idx] = "unknown"
-            print(f"🔁 Fallback [Face={f_lbl} -> Body={b_lbl}] -> Final={final_preds[idx]}")
+    if face_check_crops:
+        face_results = _predict_single_model(face_check_crops, face_model, face_processor, "FaceModel")
+        for idx, (f_lbl, f_conf) in zip(face_check_indices, face_results):
+            face_preds_map[idx] = (f_lbl, f_conf)
+            is_confident = f_conf >= FACE_MIN_CONFIDENCE
+            matches_target = (f_lbl == target_gender) if target_gender in ("female", "male") else (f_lbl != "unknown")
+
+            if is_confident and matches_target:
+                final_preds[idx] = f_lbl
+                print(f"⚡ Early-exit [Face={f_lbl}, conf={f_conf:.2f}] -> {f_lbl}")
+            else:
+                b_crop = samples[idx].get("body")
+                if b_crop is not None and getattr(b_crop, "size", 0) > 0 and body_model is not None:
+                    need_body_from_face_indices.append(idx)
+                    need_body_from_face_crops.append(b_crop)
+                else:
+                    final_preds[idx] = f_lbl
+                    print(f"ℹ️ Face-only [Face={f_lbl}, conf={f_conf:.2f}] (no body model)")
+
+    all_body_indices = direct_body_indices + need_body_from_face_indices
+    all_body_crops = direct_body_crops + need_body_from_face_crops
+
+    if all_body_crops:
+        body_results = _predict_single_model(all_body_crops, body_model, body_processor, "BodyModel")
+        for idx, (b_lbl, b_conf) in zip(all_body_indices, body_results):
+            if idx in face_preds_map:
+                f_lbl, f_conf = face_preds_map[idx]
+                # إذا كان نموذج الجسد واثقاً ويطابق الهدف، أو كانت ثقته أعلى بوضوح من الوجه الضعيف
+                if b_lbl != "unknown" and (
+                    (target_gender in ("female", "male") and b_lbl == target_gender and b_conf >= BODY_MIN_CONFIDENCE)
+                    or (f_conf < FACE_MIN_CONFIDENCE and b_conf >= f_conf)
+                ):
+                    final_preds[idx] = b_lbl
+                else:
+                    final_preds[idx] = f_lbl if f_lbl != "unknown" else b_lbl
+                print(f"🔁 Face->Body [Face={f_lbl}({f_conf:.2f}) | Body={b_lbl}({b_conf:.2f})] -> {final_preds[idx]}")
+            else:
+                # الوجه لم يكن واضحاً؛ نعتمد نتيجة الجسد إذا تجاوزت الحد الأدنى للثقة
+                if b_lbl != "unknown" and b_conf >= BODY_MIN_CONFIDENCE:
+                    final_preds[idx] = b_lbl
+                else:
+                    final_preds[idx] = "unknown"
+                print(f"🧍 Body-first [Unclear face -> Body={b_lbl}({b_conf:.2f})] -> {final_preds[idx]}")
 
     return final_preds
 
@@ -531,7 +600,7 @@ async def _text_handler(client, message):
     if text in ['11', '31', '109', '185', '261', '491']:
         cfg['BlurRate'] = text
         await message.reply_text(
-            "اختر الجندر المستهدف للبلور (الوجه أولاً ثم الجسد عند الحاجة):",
+            "اختر الجندر المستهدف للبلور (الوجه الواضح أولاً ثم الجسد عند الحاجة أو ضعف الثقة):",
             reply_markup=ReplyKeyboardMarkup([
                 [KeyboardButton("الكل"), KeyboardButton("إناث فقط"), KeyboardButton("ذكور فقط")]
             ], resize_keyboard=True)
@@ -607,7 +676,7 @@ async def _video_handler(client, message):
 def main():
     os.makedirs(Base_Dl_Dir, exist_ok=True)
     bot.start()
-    print("✅ Pro Segmentation Bot with Sequential Face->Body Early-Exit is ONLINE!")
+    print("✅ Pro Segmentation Bot with Face-Clarity & Confidence Gating is ONLINE!")
     idle()
     bot.stop()
 
