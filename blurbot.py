@@ -14,7 +14,7 @@ from transformers import AutoImageProcessor, AutoModelForImageClassification
 # تحميل نموذج الـ Segmentation الأساسي
 model = YOLO('yolov8m-seg.pt')
 
-# كاشف وجه خفيف وسريع (YuNet)
+# كاشف وجه خفيف وسريع (YuNet) مع عتبة مرنة للوجوه الصغيرة أو المائلة
 YUNET_PATH = os.getenv('YUNET_PATH', 'face_detection_yunet_2023mar.onnx')
 yunet_detector = None
 
@@ -23,7 +23,7 @@ def _init_yunet():
     if hasattr(cv2, "FaceDetectorYN") and os.path.exists(YUNET_PATH):
         try:
             yunet_detector = cv2.FaceDetectorYN.create(
-                YUNET_PATH, "", (320, 320), score_threshold=0.55, nms_threshold=0.3, top_k=10
+                YUNET_PATH, "", (320, 320), score_threshold=0.35, nms_threshold=0.3, top_k=15
             )
             print("✅ YuNet face detector loaded!")
         except Exception as e:
@@ -37,8 +37,8 @@ FACE_MODEL_ID = os.getenv('FACE_MODEL_ID', 'dima806/fairface_gender_image_detect
 BODY_MODEL_ID = os.getenv('BODY_MODEL_ID', 'NTQAI/pedestrian_gender_recognition')
 
 # عتبات الثقة القابلة للضبط
-FACE_MIN_CONFIDENCE = float(os.getenv('FACE_MIN_CONFIDENCE', '0.68'))
-BODY_MIN_CONFIDENCE = float(os.getenv('BODY_MIN_CONFIDENCE', '0.55'))
+FACE_MIN_CONFIDENCE = float(os.getenv('FACE_MIN_CONFIDENCE', '0.65'))
+BODY_MIN_CONFIDENCE = float(os.getenv('BODY_MIN_CONFIDENCE', '0.78'))
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -88,6 +88,15 @@ Base_Dl_Dir = './ProSeg_Work'
 def odd_blur_size(val: int) -> int:
     val = max(3, int(val))
     return val if val % 2 == 1 else val + 1
+
+def fmt_clock(seconds: float) -> str:
+    sec = max(0, int(seconds))
+    hrs = sec // 3600
+    mins = (sec % 3600) // 60
+    secs = sec % 60
+    if hrs > 0:
+        return f"{hrs:02d}:{mins:02d}:{secs:02d}"
+    return f"{mins:02d}:{secs:02d}"
 
 async def run_cmd(cmd: str):
     proc = await asyncio.create_subprocess_shell(
@@ -175,7 +184,7 @@ def refine_person_mask(combined_mask: np.ndarray, width: int, height: int) -> np
 
 def extract_body_and_face(frame: np.ndarray, mask_2d: np.ndarray, pad: int = 10):
     """
-    إرجاع قصاصة الجسم الكامل وقصاصة الوجه إذا تم اكتشافه بوضوح عبر YuNet.
+    إرجاع قصاصة الجسم الكامل وقصاصة الوجه إذا تم اكتشافه عبر YuNet.
     إذا لم يجد YuNet وجهاً واضحاً، تكون face_detected=False لتوجيه الفحص للجسد.
     """
     h, w = mask_2d.shape
@@ -200,26 +209,24 @@ def extract_body_and_face(frame: np.ndarray, mask_2d: np.ndarray, pad: int = 10)
             yunet_detector.setInputSize((pw, ph))
             _, faces = yunet_detector.detect(body_crop)
             if faces is not None and len(faces) > 0:
-                # اختيار أوضح وأكبر وجه بناءً على المساحة × درجة كشف الوجه
                 best = max(faces, key=lambda f: f[2] * f[3] * max(0.01, float(f[14])))
                 det_score = float(best[14])
                 fx, fy, fw, fh = int(best[0]), int(best[1]), int(best[2]), int(best[3])
-                if fw >= 20 and fh >= 20 and det_score >= 0.60:
-                    pad_x = max(5, int(0.30 * fw))
-                    pad_top = max(6, int(0.35 * fh))
-                    pad_bot = max(5, int(0.20 * fh))
+                if fw >= 14 and fh >= 14 and det_score >= 0.40:
+                    pad_x = max(4, int(0.30 * fw))
+                    pad_top = max(5, int(0.35 * fh))
+                    pad_bot = max(4, int(0.20 * fh))
                     gx1 = max(0, fx - pad_x)
                     gy1 = max(0, fy - pad_top)
                     gx2 = min(pw, fx + fw + pad_x)
                     gy2 = min(ph, fy + fh + pad_bot)
-                    if gx2 - gx1 >= 20 and gy2 - gy1 >= 20:
+                    if gx2 - gx1 >= 14 and gy2 - gy1 >= 14:
                         face_crop = body_crop[gy1:gy2, gx1:gx2]
                         face_detected = True
         except Exception:
             face_crop = None
             face_detected = False
 
-    # قص احتياطي علوي يُستخدم فقط إذا لم يكن نموذج الجسد متاحاً أصلاً
     fallback_head_crop = None
     head_h = max(16, int(ph * 0.32))
     head_w = max(16, int(pw * 0.62))
@@ -298,10 +305,8 @@ def _predict_single_model(crops: list, mdl, proc, tag: str):
 
 def classify_sequential_with_early_exit(samples: list, target_gender: str) -> list:
     """
-    - إذا كان الوجه واضحاً (face_detected=True): يفحص الوجه أولاً.
-      * إذا أعطى الجندر المطلوب وثقته >= FACE_MIN_CONFIDENCE -> يخرج فوراً (Early-Exit).
-      * إذا كانت ثقة الوجه ضعيفة (< FACE_MIN_CONFIDENCE) أو لم يطابق الجندر المطلوب -> يفحص الجسد.
-    - إذا كان الوجه غير واضح (face_detected=False): ينتقل مباشرةً لفحص الجسد (إن توفر).
+    - إذا كان الوجه واضحاً (face_detected=True): يفحص الوجه أولاً ويخرج مبكراً إذا كانت الثقة كافية وتطابق الهدف.
+    - إذا كان الوجه غير واضح أو ثقته ضعيفة: ينتقل للجسد ولا يعتمد نتيجته إلا إذا تجاوزت BODY_MIN_CONFIDENCE.
     """
     if not samples:
         return []
@@ -338,7 +343,6 @@ def classify_sequential_with_early_exit(samples: list, target_gender: str) -> li
 
             if is_confident and matches_target:
                 final_preds[idx] = f_lbl
-                print(f"⚡ Early-exit [Face={f_lbl}, conf={f_conf:.2f}] -> {f_lbl}")
             else:
                 b_crop = samples[idx].get("body")
                 if b_crop is not None and getattr(b_crop, "size", 0) > 0 and body_model is not None:
@@ -346,7 +350,6 @@ def classify_sequential_with_early_exit(samples: list, target_gender: str) -> li
                     need_body_from_face_crops.append(b_crop)
                 else:
                     final_preds[idx] = f_lbl
-                    print(f"ℹ️ Face-only [Face={f_lbl}, conf={f_conf:.2f}] (no body model)")
 
     all_body_indices = direct_body_indices + need_body_from_face_indices
     all_body_crops = direct_body_crops + need_body_from_face_crops
@@ -356,22 +359,18 @@ def classify_sequential_with_early_exit(samples: list, target_gender: str) -> li
         for idx, (b_lbl, b_conf) in zip(all_body_indices, body_results):
             if idx in face_preds_map:
                 f_lbl, f_conf = face_preds_map[idx]
-                # إذا كان نموذج الجسد واثقاً ويطابق الهدف، أو كانت ثقته أعلى بوضوح من الوجه الضعيف
-                if b_lbl != "unknown" and (
-                    (target_gender in ("female", "male") and b_lbl == target_gender and b_conf >= BODY_MIN_CONFIDENCE)
-                    or (f_conf < FACE_MIN_CONFIDENCE and b_conf >= f_conf)
+                if b_lbl != "unknown" and b_conf >= BODY_MIN_CONFIDENCE and (
+                    (target_gender in ("female", "male") and b_lbl == target_gender)
+                    or (f_conf < FACE_MIN_CONFIDENCE and b_conf > f_conf)
                 ):
                     final_preds[idx] = b_lbl
                 else:
-                    final_preds[idx] = f_lbl if f_lbl != "unknown" else b_lbl
-                print(f"🔁 Face->Body [Face={f_lbl}({f_conf:.2f}) | Body={b_lbl}({b_conf:.2f})] -> {final_preds[idx]}")
+                    final_preds[idx] = f_lbl if (f_lbl != "unknown" and f_conf >= FACE_MIN_CONFIDENCE) else "unknown"
             else:
-                # الوجه لم يكن واضحاً؛ نعتمد نتيجة الجسد إذا تجاوزت الحد الأدنى للثقة
                 if b_lbl != "unknown" and b_conf >= BODY_MIN_CONFIDENCE:
                     final_preds[idx] = b_lbl
                 else:
                     final_preds[idx] = "unknown"
-                print(f"🧍 Body-first [Unclear face -> Body={b_lbl}({b_conf:.2f})] -> {final_preds[idx]}")
 
     return final_preds
 
@@ -421,7 +420,7 @@ async def Process_Video_Pro_Segmentation(file_path, replied, BlurRate, isfull, R
     buffer = []
 
     track_gender_cache = {}
-    recheck_interval = max(3, int(round(fps * 0.20)))
+    recheck_interval = max(5, int(round(fps * 0.35)))
     any_gender_model_ready = (face_model is not None) or (body_model is not None)
     use_gender_filter = (gender_filter in ("male", "female")) and any_gender_model_ready
 
@@ -448,9 +447,11 @@ async def Process_Video_Pro_Segmentation(file_path, replied, BlurRate, isfull, R
             ispermit = any(start_f <= ret_num <= end_f for start_f, end_f in ranges)
 
         if ret_num % progress_step == 0 and duration_sec > 0:
-            cur_sec = min(int(ret_num / fps), int(duration_sec))
+            cur_sec = min(ret_num / fps, duration_sec)
             try:
-                await replied.edit_text(f"🎬 جاري المعالجة... {cur_sec} من {int(duration_sec)} ثانية")
+                await replied.edit_text(
+                    f"🎬 جاري المعالجة... `{fmt_clock(cur_sec)}-{fmt_clock(duration_sec)}`"
+                )
             except Exception:
                 pass
 
@@ -505,10 +506,11 @@ async def Process_Video_Pro_Segmentation(file_path, replied, BlurRate, isfull, R
                         for p_idx, g_label in zip(pending_indices, batch_preds):
                             mask_genders[p_idx] = g_label
                             tid = track_ids[p_idx]
+                            prev_cached = track_gender_cache.get(tid) if tid is not None else None
                             if tid is not None:
-                                if g_label == gender_filter or track_gender_cache.get(tid) != gender_filter:
+                                if g_label == gender_filter or prev_cached != gender_filter:
                                     track_gender_cache[tid] = g_label
-                            if g_label == gender_filter:
+                            if g_label == gender_filter and prev_cached != gender_filter:
                                 print(f"✅ Match at frame {ret_num} | tid={tid} -> {g_label}")
 
                     for idx, m in enumerate(resized_masks):
@@ -676,7 +678,7 @@ async def _video_handler(client, message):
 def main():
     os.makedirs(Base_Dl_Dir, exist_ok=True)
     bot.start()
-    print("✅ Pro Segmentation Bot with Face-Clarity & Confidence Gating is ONLINE!")
+    print("✅ Pro Segmentation Bot with Tuned Face/Body Gating is ONLINE!")
     idle()
     bot.stop()
 
