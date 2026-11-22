@@ -1,4 +1,4 @@
-import nest_asyncio, os, asyncio, shutil
+import nest_asyncio, os, asyncio, shutil, time, urllib.request
 nest_asyncio.apply()
 
 Bot_Token = os.getenv('TOKEN')
@@ -14,31 +14,58 @@ from transformers import AutoImageProcessor, AutoModelForImageClassification
 # تحميل نموذج الـ Segmentation الأساسي
 model = YOLO('yolov8m-seg.pt')
 
-# كاشف وجه خفيف وسريع (YuNet) مع عتبة مرنة للوجوه الصغيرة أو المائلة
+# كاشف وجه خفيف وسريع (YuNet) مع تحميل تلقائي من مستودع OpenCV الرسمي عند الحاجة
 YUNET_PATH = os.getenv('YUNET_PATH', 'face_detection_yunet_2023mar.onnx')
+YUNET_URL = (
+    "https://github.com/opencv/opencv_zoo/raw/main/models/"
+    "face_detection_yunet/face_detection_yunet_2023mar.onnx"
+)
 yunet_detector = None
+
+def _ensure_yunet_file(path: str) -> bool:
+    if os.path.exists(path) and os.path.getsize(path) > 100_000:
+        return True
+    try:
+        print(f"⬇️ Downloading YuNet weights from OpenCV GitHub to '{path}'...")
+        urllib.request.urlretrieve(YUNET_URL, path)
+        if os.path.exists(path) and os.path.getsize(path) > 100_000:
+            print(f"✅ YuNet downloaded successfully ({os.path.getsize(path)} bytes).")
+            return True
+        print(f"⚠️ YuNet download finished but file size is unexpectedly small: '{path}'.")
+        return False
+    except Exception as e:
+        print(f"❌ YuNet download failed (reason: {e}).")
+        return False
 
 def _init_yunet():
     global yunet_detector
-    if hasattr(cv2, "FaceDetectorYN") and os.path.exists(YUNET_PATH):
-        try:
-            yunet_detector = cv2.FaceDetectorYN.create(
-                YUNET_PATH, "", (320, 320), score_threshold=0.35, nms_threshold=0.3, top_k=15
-            )
-            print("✅ YuNet face detector loaded!")
-        except Exception as e:
-            print(f"⚠️ YuNet init warning: {e}")
+    if not hasattr(cv2, "FaceDetectorYN"):
+        print("⚠️ OpenCV FaceDetectorYN is unavailable in this cv2 build.")
+        return
+    if not _ensure_yunet_file(YUNET_PATH):
+        print(f"⚠️ YuNet detector skipped because weights are unavailable at '{YUNET_PATH}'.")
+        return
+    try:
+        yunet_detector = cv2.FaceDetectorYN.create(
+            YUNET_PATH, "", (320, 320), score_threshold=0.30, nms_threshold=0.3, top_k=15
+        )
+        print("✅ YuNet face detector loaded!")
+    except Exception as e:
+        yunet_detector = None
+        print(f"⚠️ YuNet init warning: {e}")
 
 _init_yunet()
 
-# النموذج الأول: متخصص في الوجه (يُفحص أولاً عند وضوح الوجه)
+# النموذج الأول: متخصص في الوجه (يُفحص أولاً عند وضوح الوجه أو الرأس)
 FACE_MODEL_ID = os.getenv('FACE_MODEL_ID', 'dima806/fairface_gender_image_detection')
 # النموذج الثاني: متخصص في الجسد (يُفحص عند عدم وضوح الوجه أو ضعف ثقة الوجه أو عدم المطابقة)
 BODY_MODEL_ID = os.getenv('BODY_MODEL_ID', 'NTQAI/pedestrian_gender_recognition')
 
-# عتبات الثقة القابلة للضبط
-FACE_MIN_CONFIDENCE = float(os.getenv('FACE_MIN_CONFIDENCE', '0.65'))
-BODY_MIN_CONFIDENCE = float(os.getenv('BODY_MIN_CONFIDENCE', '0.78'))
+# عتبات ثقة متوسطة: حتى 4 عينات كل 0.5 ثانية؛ تكفي عينة واحدة مطابقة لاعتماد البلور
+FACE_MIN_CONFIDENCE = float(os.getenv('FACE_MIN_CONFIDENCE', '0.52'))
+BODY_MIN_CONFIDENCE = float(os.getenv('BODY_MIN_CONFIDENCE', '0.55'))
+SAMPLE_INTERVAL_SEC = float(os.getenv('SAMPLE_INTERVAL_SEC', '0.5'))
+MAX_SAMPLES_PER_TRACK = int(os.getenv('MAX_SAMPLES_PER_TRACK', '4'))
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -98,6 +125,14 @@ def fmt_clock(seconds: float) -> str:
         return f"{hrs:02d}:{mins:02d}:{secs:02d}"
     return f"{mins:02d}:{secs:02d}"
 
+def format_elapsed_min_sec(elapsed_sec: float) -> str:
+    total_sec = max(0.0, float(elapsed_sec))
+    mins = int(total_sec // 60)
+    rem_sec = total_sec - (mins * 60)
+    if mins > 0:
+        return f"{mins} دقيقة و {rem_sec:.2f} ثانية ({total_sec:.2f} ثانية)"
+    return f"0 دقيقة و {rem_sec:.2f} ثانية ({total_sec:.2f} ثانية)"
+
 async def run_cmd(cmd: str):
     proc = await asyncio.create_subprocess_shell(
         cmd,
@@ -112,8 +147,25 @@ async def Create_Dir(Dir):
     os.makedirs(Dir, exist_ok=True)
 
 async def Check_Dir(Dir):
-    if os.path.isdir(Dir):
-        shutil.rmtree(Dir, ignore_errors=True)
+    if Dir and os.path.exists(Dir):
+        if os.path.isdir(Dir):
+            shutil.rmtree(Dir, ignore_errors=True)
+        else:
+            try:
+                os.remove(Dir)
+            except OSError:
+                pass
+
+def Cleanup_Work_Dir(work_dir: str = Base_Dl_Dir):
+    """حذف مجلد العمل بالكامل لضمان عدم بقاء أي ملفات مؤقتة."""
+    if work_dir and os.path.exists(work_dir):
+        if os.path.isdir(work_dir):
+            shutil.rmtree(work_dir, ignore_errors=True)
+        else:
+            try:
+                os.remove(work_dir)
+            except OSError:
+                pass
 
 async def Mp3_Conv(File):
     base_no_ext, _ = os.path.splitext(File)
@@ -172,7 +224,7 @@ async def get_seconds(clock_time):
         seconds = float(parts[0])
     return (hours * 3600.0) + (minutes * 60.0) + seconds
 
-def refine_person_mask(combined_mask: np.ndarray, width: int, height: int) -> np.ndarray:
+def refine_person_mask(combined_mask: np.ndarray) -> np.ndarray:
     """توسيع وتنعيم القناع لتقليل الفلتات على الحواف والحركة السريعة."""
     binary = (combined_mask > 0.15).astype(np.uint8) * 255
     close_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (11, 11))
@@ -184,8 +236,8 @@ def refine_person_mask(combined_mask: np.ndarray, width: int, height: int) -> np
 
 def extract_body_and_face(frame: np.ndarray, mask_2d: np.ndarray, pad: int = 10):
     """
-    إرجاع قصاصة الجسم الكامل وقصاصة الوجه إذا تم اكتشافه عبر YuNet.
-    إذا لم يجد YuNet وجهاً واضحاً، تكون face_detected=False لتوجيه الفحص للجسد.
+    إرجاع قصاصة الجسم الكامل وقصاصة الوجه إذا تم اكتشافه عبر YuNet،
+    مع توفير قصاصة رأس احتياطية عند تعذر اكتشاف الوجه عبر YuNet.
     """
     h, w = mask_2d.shape
     ys, xs = np.where(mask_2d > 0.15)
@@ -203,6 +255,7 @@ def extract_body_and_face(frame: np.ndarray, mask_2d: np.ndarray, pad: int = 10)
     body_crop = frame[y1:y2, x1:x2]
     face_crop = None
     face_detected = False
+    yunet_score = 0.0
 
     if yunet_detector is not None:
         try:
@@ -211,8 +264,9 @@ def extract_body_and_face(frame: np.ndarray, mask_2d: np.ndarray, pad: int = 10)
             if faces is not None and len(faces) > 0:
                 best = max(faces, key=lambda f: f[2] * f[3] * max(0.01, float(f[14])))
                 det_score = float(best[14])
+                yunet_score = det_score
                 fx, fy, fw, fh = int(best[0]), int(best[1]), int(best[2]), int(best[3])
-                if fw >= 14 and fh >= 14 and det_score >= 0.40:
+                if fw >= 14 and fh >= 14 and det_score >= 0.30:
                     pad_x = max(4, int(0.30 * fw))
                     pad_top = max(5, int(0.35 * fh))
                     pad_bot = max(4, int(0.20 * fh))
@@ -241,7 +295,8 @@ def extract_body_and_face(frame: np.ndarray, mask_2d: np.ndarray, pad: int = 10)
         "body": body_crop,
         "face": face_crop,
         "fallback_head": fallback_head_crop,
-        "face_detected": face_detected
+        "face_detected": face_detected,
+        "yunet_score": yunet_score
     }
 
 def _label_to_gender(raw_label: str, idx: int) -> str:
@@ -253,10 +308,6 @@ def _label_to_gender(raw_label: str, idx: int) -> str:
     return "female" if idx == 1 else "male"
 
 def _predict_single_model(crops: list, mdl, proc, tag: str):
-    """
-    تشغيل نموذج واحد على قائمة صور وإرجاع قائمة من الأزواج:
-    (label: 'male'/'female'/'unknown', confidence: float بين 0.0 و 1.0).
-    """
     if mdl is None or proc is None:
         return [("unknown", 0.0)] * len(crops)
 
@@ -303,32 +354,51 @@ def _predict_single_model(crops: list, mdl, proc, tag: str):
 
     return results_out
 
-def classify_sequential_with_early_exit(samples: list, target_gender: str) -> list:
+def classify_sequential_with_debug(samples: list, target_gender: str):
     """
-    - إذا كان الوجه واضحاً (face_detected=True): يفحص الوجه أولاً ويخرج مبكراً إذا كانت الثقة كافية وتطابق الهدف.
-    - إذا كان الوجه غير واضح أو ثقته ضعيفة: ينتقل للجسد ولا يعتمد نتيجته إلا إذا تجاوزت BODY_MIN_CONFIDENCE.
+    فحص متسلسل بعتبات متوسطة مع أولوية مطلقة للجندر المستهدف (وخصوصاً female):
+    إذا أعطى نموذج الوجه أو نموذج الجسد الجندر المستهدف بنسبة معقولة (> 0.50)، يُقدَّم ويُعتمد فوراً.
     """
     if not samples:
-        return []
+        return [], []
 
     final_preds = ["unknown"] * len(samples)
+    debug_info = [
+        {
+            "src": "none",
+            "face_det": bool(s.get("face_detected")),
+            "yn": round(float(s.get("yunet_score", 0.0)), 2),
+            "f": None,
+            "b": None,
+        }
+        for s in samples
+    ]
+
     face_check_indices = []
     face_check_crops = []
     direct_body_indices = []
     direct_body_crops = []
 
     for i, s in enumerate(samples):
-        if s.get("face_detected") and s.get("face") is not None and face_model is not None:
-            face_check_indices.append(i)
-            face_check_crops.append(s["face"])
-        else:
-            b_crop = s.get("body")
-            if b_crop is not None and getattr(b_crop, "size", 0) > 0 and body_model is not None:
-                direct_body_indices.append(i)
-                direct_body_crops.append(b_crop)
-            elif s.get("fallback_head") is not None and face_model is not None:
+        if face_model is not None:
+            if s.get("face_detected") and s.get("face") is not None:
+                face_check_indices.append(i)
+                face_check_crops.append(s["face"])
+                debug_info[i]["src"] = "face"
+            elif s.get("fallback_head") is not None:
                 face_check_indices.append(i)
                 face_check_crops.append(s["fallback_head"])
+                debug_info[i]["src"] = "head"
+            elif s.get("body") is not None and getattr(s.get("body"), "size", 0) > 0 and body_model is not None:
+                direct_body_indices.append(i)
+                direct_body_crops.append(s["body"])
+                debug_info[i]["src"] = "body"
+        elif body_model is not None:
+            b_crop = s.get("body")
+            if b_crop is not None and getattr(b_crop, "size", 0) > 0:
+                direct_body_indices.append(i)
+                direct_body_crops.append(b_crop)
+                debug_info[i]["src"] = "body"
 
     face_preds_map = {}
     need_body_from_face_indices = []
@@ -338,6 +408,13 @@ def classify_sequential_with_early_exit(samples: list, target_gender: str) -> li
         face_results = _predict_single_model(face_check_crops, face_model, face_processor, "FaceModel")
         for idx, (f_lbl, f_conf) in zip(face_check_indices, face_results):
             face_preds_map[idx] = (f_lbl, f_conf)
+            debug_info[idx]["f"] = f"{f_lbl}:{f_conf:.2f}"
+
+            # أولوية للجندر المستهدف إذا أعطاه نموذج الوجه فوق 0.50 أو تجاوز العتبة المتوسطة
+            if target_gender in ("female", "male") and f_lbl == target_gender and f_conf > 0.50:
+                final_preds[idx] = f_lbl
+                continue
+
             is_confident = f_conf >= FACE_MIN_CONFIDENCE
             matches_target = (f_lbl == target_gender) if target_gender in ("female", "male") else (f_lbl != "unknown")
 
@@ -348,8 +425,9 @@ def classify_sequential_with_early_exit(samples: list, target_gender: str) -> li
                 if b_crop is not None and getattr(b_crop, "size", 0) > 0 and body_model is not None:
                     need_body_from_face_indices.append(idx)
                     need_body_from_face_crops.append(b_crop)
+                    debug_info[idx]["src"] = f"{debug_info[idx]['src']}+body"
                 else:
-                    final_preds[idx] = f_lbl
+                    final_preds[idx] = f_lbl if is_confident else "unknown"
 
     all_body_indices = direct_body_indices + need_body_from_face_indices
     all_body_crops = direct_body_crops + need_body_from_face_crops
@@ -357,8 +435,19 @@ def classify_sequential_with_early_exit(samples: list, target_gender: str) -> li
     if all_body_crops:
         body_results = _predict_single_model(all_body_crops, body_model, body_processor, "BodyModel")
         for idx, (b_lbl, b_conf) in zip(all_body_indices, body_results):
+            debug_info[idx]["b"] = f"{b_lbl}:{b_conf:.2f}"
+            f_lbl, f_conf = face_preds_map.get(idx, ("unknown", 0.0))
+
+            # تقديم الجندر المستهدف دائماً إذا أعطاه أي من النموذجين بنسبة > 0.50
+            if target_gender in ("female", "male"):
+                if b_lbl == target_gender and b_conf > 0.50:
+                    final_preds[idx] = b_lbl
+                    continue
+                if f_lbl == target_gender and f_conf > 0.50:
+                    final_preds[idx] = f_lbl
+                    continue
+
             if idx in face_preds_map:
-                f_lbl, f_conf = face_preds_map[idx]
                 if b_lbl != "unknown" and b_conf >= BODY_MIN_CONFIDENCE and (
                     (target_gender in ("female", "male") and b_lbl == target_gender)
                     or (f_conf < FACE_MIN_CONFIDENCE and b_conf > f_conf)
@@ -372,12 +461,57 @@ def classify_sequential_with_early_exit(samples: list, target_gender: str) -> li
                 else:
                     final_preds[idx] = "unknown"
 
-    return final_preds
+    return final_preds, debug_info
+
+def _finalize_incomplete_track(tid: int, v: dict, target_gender: str):
+    """
+    حسم قرار الـ track غير المكتمل (الذي لم يصل إلى MAX_SAMPLES_PER_TRACK ولم يجد الجندر المطلوب)
+    بالاعتماد على الجندر المخالف الذي وُجد فعلاً أثناء ظهوره.
+    """
+    if v["decided"]:
+        return
+
+    opposite_gender = "male" if target_gender == "female" else ("female" if target_gender == "male" else None)
+
+    if opposite_gender and v.get(opposite_gender, 0) > 0:
+        v["resolved_gender"] = opposite_gender
+        v["decision_reason"] = "opposite_gender_early_exit"
+    elif v.get("female", 0) > 0 and v.get("male", 0) == 0:
+        v["resolved_gender"] = "female"
+        v["decision_reason"] = "observed_female_early_exit"
+    elif v.get("male", 0) > 0 and v.get("female", 0) == 0:
+        v["resolved_gender"] = "male"
+        v["decision_reason"] = "observed_male_early_exit"
+    else:
+        v["resolved_gender"] = "unknown"
+        v["decision_reason"] = "no_target_before_exit"
+
+    v["decided"] = True
+
+def apply_local_roi_blur(frame: np.ndarray, alpha: np.ndarray, ksize: int) -> np.ndarray:
+    """تطبيق البلور والمزج على المستطيل المحيط بالقناع فقط لتسريع المعالجة."""
+    ys, xs = np.where(alpha > 0.01)
+    if len(xs) == 0 or len(ys) == 0:
+        return frame
+
+    h, w = frame.shape[:2]
+    pad = max(16, ksize // 2)
+    x1 = max(0, int(xs.min()) - pad)
+    y1 = max(0, int(ys.min()) - pad)
+    x2 = min(w, int(xs.max()) + pad + 1)
+    y2 = min(h, int(ys.max()) + pad + 1)
+
+    out_frame = frame.copy()
+    roi = out_frame[y1:y2, x1:x2]
+    roi_alpha = alpha[y1:y2, x1:x2, None]
+    blurred_roi = cv2.blur(roi, (ksize, ksize))
+    out_frame[y1:y2, x1:x2] = (blurred_roi * roi_alpha + roi * (1.0 - roi_alpha)).astype(np.uint8)
+    return out_frame
 
 async def Process_Video_Pro_Segmentation(file_path, replied, BlurRate, isfull, Ranges, gender_filter="all"):
     ksize = odd_blur_size(BlurRate)
     base_no_ext, _ = os.path.splitext(file_path)
-    raw_out_path = f"{base_no_ext}_RawBlur.mp4"
+    raw_out_path = f"{base_no_ext}_RawBlur.avi"
 
     Aud = None
     try:
@@ -389,152 +523,262 @@ async def Process_Video_Pro_Segmentation(file_path, replied, BlurRate, isfull, R
     if not cap.isOpened():
         raise ValueError("تعذر فتح ملف الفيديو.")
 
-    fps = cap.get(cv2.CAP_PROP_FPS)
-    if not fps or fps <= 1:
-        fps = 25.0
-    progress_step = max(1, int(round(fps)))
+    out = None
+    try:
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        if not fps or fps <= 1:
+            fps = 25.0
+        progress_step = max(1, int(round(fps)))
 
-    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
-    duration_sec = total_frames / fps if total_frames > 0 else 0
-    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+        duration_sec = total_frames / fps if total_frames > 0 else 0
+        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
-    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-    out = cv2.VideoWriter(raw_out_path, fourcc, fps, (width, height))
+        ranges = []
+        if not isfull and Ranges:
+            for rng in Ranges.strip().split():
+                if '-' in rng:
+                    s_str, e_str = rng.split('-', 1)
+                    start_f = int(await get_seconds(s_str) * fps)
+                    end_f = int(await get_seconds(e_str) * fps)
+                    if end_f >= start_f:
+                        ranges.append((start_f, end_f))
 
-    ranges = []
-    if not isfull and Ranges:
-        for rng in Ranges.strip().split():
-            if '-' in rng:
-                s_str, e_str = rng.split('-', 1)
-                start_f = int(await get_seconds(s_str) * fps)
-                end_f = int(await get_seconds(e_str) * fps)
-                if end_f >= start_f:
-                    ranges.append((start_f, end_f))
+        any_gender_model_ready = (face_model is not None) or (body_model is not None)
+        use_gender_filter = (gender_filter in ("male", "female")) and any_gender_model_ready
 
-    pre_roll_frames = max(4, int(round(fps * 0.25)))
-    max_hold_frames = max(4, int(round(fps * 0.25)))
+        # =====================================================================
+        # المرحلة الأولى: رصد الفيديو وحفظ الأقنعة + حتى 4 فحوصات كل 0.5 ثانية
+        # =====================================================================
+        frame_records = {}
+        track_votes = {}
+        approved_tids = set()
+        sample_logs = []
+        sample_interval_frames = max(1, int(round(fps * SAMPLE_INTERVAL_SEC)))
 
-    last_alpha = np.zeros((height, width), dtype=np.float32)
-    hold_counter = 0
-    buffer = []
+        t_track_sum = 0.0
+        t_gender_sum = 0.0
+        t_blur_sum = 0.0
+        processed_frames_cnt = 0
 
-    track_gender_cache = {}
-    recheck_interval = max(5, int(round(fps * 0.35)))
-    any_gender_model_ready = (face_model is not None) or (body_model is not None)
-    use_gender_filter = (gender_filter in ("male", "female")) and any_gender_model_ready
+        ret_num = 0
+        blur_inspect_start = time.perf_counter()
 
-    def write_buffered_item(item):
-        buf_frame, buf_alpha = item
-        if np.any(buf_alpha > 0.01):
-            blurred_frame = cv2.blur(buf_frame, (ksize, ksize))
-            alpha_3c = buf_alpha[:, :, None]
-            merged = (blurred_frame * alpha_3c + buf_frame * (1.0 - alpha_3c)).astype(np.uint8)
-            out.write(merged)
-        else:
-            out.write(buf_frame)
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
+            ret_num += 1
 
-    ret_num = 0
+            ispermit = True
+            if not isfull:
+                ispermit = any(start_f <= ret_num <= end_f for start_f, end_f in ranges)
 
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            break
-        ret_num += 1
+            if ret_num % progress_step == 0 and duration_sec > 0:
+                cur_sec = min(ret_num / fps, duration_sec)
+                try:
+                    await replied.edit_text(
+                        f"🔍 المرحلة 1/2 (الرصد والفحص كل {SAMPLE_INTERVAL_SEC}ث حتى {MAX_SAMPLES_PER_TRACK} مرات)... `{fmt_clock(cur_sec)}-{fmt_clock(duration_sec)}`"
+                    )
+                except Exception:
+                    pass
 
-        ispermit = True
-        if not isfull:
-            ispermit = any(start_f <= ret_num <= end_f for start_f, end_f in ranges)
+            if not ispermit:
+                continue
 
-        if ret_num % progress_step == 0 and duration_sec > 0:
-            cur_sec = min(ret_num / fps, duration_sec)
-            try:
-                await replied.edit_text(
-                    f"🎬 جاري المعالجة... `{fmt_clock(cur_sec)}-{fmt_clock(duration_sec)}`"
-                )
-            except Exception:
-                pass
-
-        if ispermit:
+            processed_frames_cnt += 1
+            t0_track = time.perf_counter()
             results = model.track(
                 frame,
                 persist=True,
                 classes=[0],
-                conf=0.28,
+                conf=0.25,
                 iou=0.45,
-                imgsz=640,
-                retina_masks=True,
+                imgsz=512,
+                retina_masks=False,
                 tracker="bytetrack.yaml",
                 verbose=False
             )
+            t_track_sum += time.perf_counter() - t0_track
 
-            current_mask = np.zeros((height, width), dtype=np.float32)
             if results and results[0].masks is not None:
                 masks = results[0].masks.data.cpu().numpy()
-                resized_masks = []
-                for m in masks:
-                    if m.shape != (height, width):
-                        m = cv2.resize(m, (width, height), interpolation=cv2.INTER_LINEAR)
-                    resized_masks.append(m.astype(np.float32))
+                boxes = results[0].boxes
+                raw_ids = boxes.id.int().cpu().tolist() if (boxes is not None and boxes.id is not None) else []
 
-                if use_gender_filter:
-                    boxes = results[0].boxes
-                    raw_ids = boxes.id.int().cpu().tolist() if (boxes is not None and boxes.id is not None) else []
-                    track_ids = [raw_ids[i] if i < len(raw_ids) else None for i in range(len(resized_masks))]
+                records_this_frame = []
+                pending_tids = []
+                pending_samples = []
 
-                    mask_genders = ["unknown"] * len(resized_masks)
-                    pending_indices = []
-                    pending_samples = []
+                for idx, m in enumerate(masks):
+                    tid = raw_ids[idx] if idx < len(raw_ids) else -1
+                    bin_mask = (m > 0.30).astype(np.uint8)
+                    records_this_frame.append((tid, bin_mask))
 
-                    for idx, m in enumerate(resized_masks):
-                        tid = track_ids[idx]
-                        if tid is not None and tid in track_gender_cache:
-                            mask_genders[idx] = track_gender_cache[tid]
-                            if track_gender_cache[tid] != gender_filter and (ret_num % recheck_interval == 0):
-                                sample = extract_body_and_face(frame, m)
-                                if sample is not None:
-                                    pending_indices.append(idx)
-                                    pending_samples.append(sample)
-                        else:
-                            sample = extract_body_and_face(frame, m)
+                    if use_gender_filter:
+                        if tid not in track_votes:
+                            track_votes[tid] = {
+                                "female": 0,
+                                "male": 0,
+                                "samples": 0,
+                                "last_sample_f": -999999,
+                                "decided": False,
+                                "resolved_gender": None,
+                                "decision_reason": None
+                            }
+
+                        v = track_votes[tid]
+                        # يستمر في الفحص طالما لم يُحسم بعد ولم يتجاوز الحد الأقصى للعينات
+                        if (
+                            not v["decided"]
+                            and v["samples"] < MAX_SAMPLES_PER_TRACK
+                            and (ret_num - v["last_sample_f"]) >= sample_interval_frames
+                        ):
+                            full_m = cv2.resize(bin_mask.astype(np.float32), (width, height), interpolation=cv2.INTER_NEAREST)
+                            sample = extract_body_and_face(frame, full_m)
                             if sample is not None:
-                                pending_indices.append(idx)
+                                pending_tids.append(tid)
                                 pending_samples.append(sample)
+                                v["last_sample_f"] = ret_num
 
-                    if pending_samples:
-                        batch_preds = classify_sequential_with_early_exit(pending_samples, gender_filter)
-                        for p_idx, g_label in zip(pending_indices, batch_preds):
-                            mask_genders[p_idx] = g_label
-                            tid = track_ids[p_idx]
-                            prev_cached = track_gender_cache.get(tid) if tid is not None else None
-                            if tid is not None:
-                                if g_label == gender_filter or prev_cached != gender_filter:
-                                    track_gender_cache[tid] = g_label
-                            if g_label == gender_filter and prev_cached != gender_filter:
-                                print(f"✅ Match at frame {ret_num} | tid={tid} -> {g_label}")
+                frame_records[ret_num] = records_this_frame
 
-                    for idx, m in enumerate(resized_masks):
-                        if mask_genders[idx] == gender_filter:
-                            current_mask = np.maximum(current_mask, m)
+                if use_gender_filter and pending_samples:
+                    t0_g = time.perf_counter()
+                    batch_preds, batch_dbg = classify_sequential_with_debug(pending_samples, gender_filter)
+                    sec_now = round(ret_num / fps, 2)
+                    for tid, g_label, dbg in zip(pending_tids, batch_preds, batch_dbg):
+                        v = track_votes[tid]
+                        if v["decided"]:
+                            continue
+                        v["samples"] += 1
+                        if g_label in ("female", "male"):
+                            v[g_label] += 1
+
+                        # 1) إذا وُجد الجندر المطلوب: يُعتمد فوراً ويتوقف الفحص لهذا الـ tid
+                        if g_label == gender_filter:
+                            approved_tids.add(tid)
+                            v["resolved_gender"] = gender_filter
+                            v["decision_reason"] = "target_gender_found"
+                            v["decided"] = True
+                        # 2) إذا اكتمل الحد الأقصى للعينات دون إيجاد الجندر المطلوب: يُحسم بما وُجد
+                        elif v["samples"] >= MAX_SAMPLES_PER_TRACK:
+                            v["resolved_gender"] = g_label if g_label in ("female", "male") else (
+                                "female" if v["female"] > v["male"] else ("male" if v["male"] > v["female"] else "unknown")
+                            )
+                            v["decision_reason"] = "max_samples_reached"
+                            v["decided"] = True
+
+                        entry = (
+                            f"tid={tid} f={ret_num}({sec_now}s) s#{v['samples']}/{MAX_SAMPLES_PER_TRACK} "
+                            f"src={dbg['src']} yn={dbg['yn']} F={dbg['f']} B={dbg['b']} -> {g_label} "
+                            f"[approved={tid in approved_tids}, decided={v['decided']}, reason={v['decision_reason']}]"
+                        )
+                        sample_logs.append(entry)
+                        print(f"🧪 [SAMPLE_DEBUG] {entry}")
+                    t_gender_sum += time.perf_counter() - t0_g
+
+        # حسم أي track لم يكمل العينات بسبب اختفائه أو نهاية المرحلة الأولى
+        if use_gender_filter:
+            for tid, v in track_votes.items():
+                if not v["decided"]:
+                    _finalize_incomplete_track(tid, v, gender_filter)
+                    print(
+                        f"⏹️ [EARLY_EXIT_RESOLVED] tid={tid} target={gender_filter} "
+                        f"samples={v['samples']}/{MAX_SAMPLES_PER_TRACK} "
+                        f"votes=(F:{v['female']}, M:{v['male']}) -> {v['resolved_gender']} "
+                        f"[{v['decision_reason']}, approved={tid in approved_tids}]"
+                    )
+
+            print(f"⚡ Approved ({gender_filter}, max={MAX_SAMPLES_PER_TRACK}): {sorted(approved_tids)} | Votes: {track_votes}")
+            print(f"📋 Total samples logged: {len(sample_logs)}")
+
+        # =====================================================================
+        # المرحلة الثانية: تطبيق البلور على الأقنعة المحفوظة من أول ظهور للـ object
+        # =====================================================================
+        cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+        fourcc = cv2.VideoWriter_fourcc(*'MJPG')
+        out = cv2.VideoWriter(raw_out_path, fourcc, fps, (width, height))
+        if not out.isOpened():
+            raise RuntimeError("تعذر فتح VideoWriter لكتابة الفيديو المؤقت.")
+
+        pre_roll_frames = max(4, int(round(fps * 0.25)))
+        max_hold_frames = max(4, int(round(fps * 0.25)))
+
+        last_alpha = np.zeros((height, width), dtype=np.float32)
+        hold_counter = 0
+        buffer = []
+
+        def write_buffered_item(item):
+            nonlocal t_blur_sum
+            t0 = time.perf_counter()
+            buf_frame, buf_alpha = item
+            if buf_frame.shape[1] != width or buf_frame.shape[0] != height:
+                buf_frame = cv2.resize(buf_frame, (width, height), interpolation=cv2.INTER_LINEAR)
+            if buf_alpha.shape[1] != width or buf_alpha.shape[0] != height:
+                buf_alpha = cv2.resize(buf_alpha, (width, height), interpolation=cv2.INTER_LINEAR)
+
+            if np.any(buf_alpha > 0.01):
+                merged = apply_local_roi_blur(buf_frame, buf_alpha, ksize)
+                out.write(merged)
+            else:
+                out.write(buf_frame)
+            t_blur_sum += time.perf_counter() - t0
+
+        ret_num = 0
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
+            ret_num += 1
+
+            if ret_num % progress_step == 0 and duration_sec > 0:
+                cur_sec = min(ret_num / fps, duration_sec)
+                try:
+                    await replied.edit_text(
+                        f"🎬 المرحلة 2/2 (تطبيق البلور)... `{fmt_clock(cur_sec)}-{fmt_clock(duration_sec)}`"
+                    )
+                except Exception:
+                    pass
+
+            records = frame_records.get(ret_num)
+            if records:
+                combined_small = None
+                for tid, bin_mask in records:
+                    if (not use_gender_filter) or (tid in approved_tids):
+                        if combined_small is None:
+                            combined_small = bin_mask.copy()
+                        else:
+                            combined_small = np.maximum(combined_small, bin_mask)
+
+                if combined_small is not None and np.any(combined_small > 0):
+                    current_mask = cv2.resize(
+                        combined_small.astype(np.float32),
+                        (width, height),
+                        interpolation=cv2.INTER_LINEAR
+                    )
+                    hold_counter = max_hold_frames
+                    alpha = refine_person_mask(current_mask)
+                    alpha = np.maximum(alpha, last_alpha * 0.7)
+                    last_alpha = alpha
+
+                    buf_len = len(buffer)
+                    lookback = min(pre_roll_frames, buf_len)
+                    for i in range(1, lookback + 1):
+                        idx = buf_len - i
+                        back_weight = max(0.35, 1.0 - (i / (pre_roll_frames + 1)) * 0.65)
+                        prev_f, prev_a = buffer[idx]
+                        updated_a = np.maximum(prev_a, alpha * back_weight)
+                        buffer[idx] = (prev_f, updated_a)
+                elif hold_counter > 0:
+                    hold_counter -= 1
+                    decay = (hold_counter + 1) / (max_hold_frames + 1)
+                    alpha = last_alpha * decay
+                    last_alpha = alpha
                 else:
-                    for m in resized_masks:
-                        current_mask = np.maximum(current_mask, m)
-
-            if np.any(current_mask > 0.15):
-                hold_counter = max_hold_frames
-                alpha = refine_person_mask(current_mask, width, height)
-                alpha = np.maximum(alpha, last_alpha * 0.7)
-                last_alpha = alpha
-
-                buf_len = len(buffer)
-                lookback = min(pre_roll_frames, buf_len)
-                for i in range(1, lookback + 1):
-                    idx = buf_len - i
-                    back_weight = max(0.35, 1.0 - (i / (pre_roll_frames + 1)) * 0.65)
-                    prev_f, prev_a = buffer[idx]
-                    updated_a = np.maximum(prev_a, alpha * back_weight)
-                    buffer[idx] = (prev_f, updated_a)
-
+                    alpha = np.zeros((height, width), dtype=np.float32)
+                    last_alpha = alpha
             elif hold_counter > 0:
                 hold_counter -= 1
                 decay = (hold_counter + 1) / (max_hold_frames + 1)
@@ -543,24 +787,37 @@ async def Process_Video_Pro_Segmentation(file_path, replied, BlurRate, isfull, R
             else:
                 alpha = np.zeros((height, width), dtype=np.float32)
                 last_alpha = alpha
-        else:
-            alpha = np.zeros((height, width), dtype=np.float32)
-            last_alpha = alpha
-            hold_counter = 0
 
-        buffer.append((frame, alpha))
+            buffer.append((frame, alpha))
+            while len(buffer) > pre_roll_frames + 1:
+                write_buffered_item(buffer.pop(0))
 
-        while len(buffer) > pre_roll_frames + 1:
+        while buffer:
             write_buffered_item(buffer.pop(0))
 
-    while buffer:
-        write_buffered_item(buffer.pop(0))
+        out.release()
+        out = None
 
-    cap.release()
-    out.release()
+        if not os.path.exists(raw_out_path) or os.path.getsize(raw_out_path) == 0:
+            raise RuntimeError("فشل إنشاء ملف الفيديو المؤقت أو أنه فارغ.")
 
-    final_vid = await Vid_Mk(raw_out_path, Aud)
-    return final_vid
+        blur_inspect_elapsed = time.perf_counter() - blur_inspect_start
+
+        if processed_frames_cnt > 0:
+            print(
+                f"📊 Avg/frame over {processed_frames_cnt} frames | "
+                f"track: {(t_track_sum/processed_frames_cnt)*1000:.1f}ms | "
+                f"gender: {(t_gender_sum/processed_frames_cnt)*1000:.1f}ms | "
+                f"blur+write: {(t_blur_sum/processed_frames_cnt)*1000:.1f}ms"
+            )
+
+        final_vid = await Vid_Mk(raw_out_path, Aud)
+        return final_vid, blur_inspect_elapsed
+    finally:
+        if cap is not None:
+            cap.release()
+        if out is not None:
+            out.release()
 
 bot, Bot_Identifier = Pyrogram_Client(Bot_Token)
 
@@ -658,9 +915,10 @@ async def _video_handler(client, message):
     await Create_Dir(user_dir)
     replied = await message.reply_text('🚀 جاري تحميل الفيديو ومعالجة النطاقات المحددة بدقة...')
 
+    upload_succeeded = False
     try:
         vid_path = await message.download(file_name=os.path.join(user_dir, ""))
-        blurred_vid = await Process_Video_Pro_Segmentation(
+        blurred_vid, blur_inspect_elapsed = await Process_Video_Pro_Segmentation(
             vid_path,
             replied,
             cfg['BlurRate'],
@@ -668,19 +926,29 @@ async def _video_handler(client, message):
             cfg['Ranges'],
             cfg.get('Gender', 'all')
         )
-        await replied.edit_text('✅ تمت العملية باحترافية تامة!')
+        time_str = format_elapsed_min_sec(blur_inspect_elapsed)
+        await replied.edit_text(
+            f"✅ تمت العملية باحترافية تامة!\n⏱️ وقت الفحص والبلور: `{time_str}`"
+        )
         await message.reply_video(blurred_vid)
+        upload_succeeded = True
     except Exception as e:
         await replied.edit_text(f'❌ حدث خطأ: {str(e)}')
     finally:
-        await Check_Dir(user_dir)
+        if upload_succeeded or not os.path.exists(user_dir):
+            await Check_Dir(user_dir)
+            if os.path.isdir(Base_Dl_Dir) and not os.listdir(Base_Dl_Dir):
+                Cleanup_Work_Dir(Base_Dl_Dir)
 
 def main():
-    os.makedirs(Base_Dl_Dir, exist_ok=True)
+    Cleanup_Work_Dir(Base_Dl_Dir)
     bot.start()
-    print("✅ Pro Segmentation Bot with Tuned Face/Body Gating is ONLINE!")
-    idle()
-    bot.stop()
+    print("✅ Pro Segmentation Bot (Medium Thresholds + Target Priority + Max 4 Samples) is ONLINE!")
+    try:
+        idle()
+    finally:
+        bot.stop()
+        Cleanup_Work_Dir(Base_Dl_Dir)
 
 if __name__ == '__main__':
     main()
