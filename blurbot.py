@@ -12,6 +12,7 @@ Api_Id = 15952578
 Api_Hash = '3600ce5f8f9b9e18cba0f318fa0e3600'
 from pyrogram import Client, filters, idle
 from pyrogram.types import ReplyKeyboardMarkup, KeyboardButton
+from pyrogram.errors import FloodWait
 import cv2, numpy as np
 import torch
 from ultralytics import YOLO
@@ -41,8 +42,9 @@ BODY_MIN_CONFIDENCE = float(os.getenv('BODY_MIN_CONFIDENCE', '0.78'))    # جس�
 BODY_ONLY_WEIGHT = float(os.getenv('BODY_ONLY_WEIGHT', '0.65'))          # تخفيف وزن عينة الجسد فقط
 
 SAMPLE_INTERVAL_SEC = float(os.getenv('SAMPLE_INTERVAL_SEC', '0.35'))
-MAX_SAMPLES_PER_TRACK = int(os.getenv('MAX_SAMPLES_PER_TRACK', '8'))
+MAX_SAMPLES_PER_TRACK = int(os.getenv('MAX_SAMPLES_PER_TRACK', '12'))
 MIN_CONFIRM_VOTES = int(os.getenv('MIN_CONFIRM_VOTES', '3'))
+PROGRESS_EDIT_MIN_SEC = float(os.getenv('PROGRESS_EDIT_MIN_SEC', '4.0'))
 
 mivolo_predictor = None
 mivolo_init_error = None
@@ -68,9 +70,11 @@ def _init_mivolo():
         mivolo_predictor = Predictor(cfg, verbose=False)
         print(f"✅ MiVOLO loaded on {MIVOLO_DEVICE}")
     except Exception as e:
+        import traceback
         mivolo_predictor = None
-        mivolo_init_error = str(e)
+        mivolo_init_error = f"{type(e).__name__}: {e}"
         print(f"⚠️ MiVOLO init error: {mivolo_init_error}")
+        traceback.print_exc()
     finally:
         if prev_flag is None:
             os.environ.pop('TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD', None)
@@ -83,6 +87,26 @@ Audio_Forms = (".mp3", ".ogg", ".m4a", ".aac", ".flac", ".wav", ".wma", ".opus",
 
 Settings_Dict = {}
 Base_Dl_Dir = './ProSeg_Work'
+
+async def safe_edit_text(replied, text: str, last_edit_ref: list, force: bool = False):
+    """تحديث رسالة التقدم بحد أدنى زمني ومعالجة FloodWait لتجنب حظر أو تأخير تيليجرام."""
+    if replied is None:
+        return
+    now = time.monotonic()
+    if not force and (now - last_edit_ref[0]) < PROGRESS_EDIT_MIN_SEC:
+        return
+    try:
+        await replied.edit_text(text)
+        last_edit_ref[0] = time.monotonic()
+    except FloodWait as fw:
+        await asyncio.sleep(min(float(fw.value) + 0.5, 15.0))
+        try:
+            await replied.edit_text(text)
+            last_edit_ref[0] = time.monotonic()
+        except Exception:
+            pass
+    except Exception:
+        pass
 
 def odd_blur_size(val: int) -> int:
     val = max(3, int(val))
@@ -213,7 +237,7 @@ def refine_person_mask(combined_mask: np.ndarray) -> np.ndarray:
 def extract_body_crop(frame: np.ndarray, mask_2d: np.ndarray, pad: int = 10):
     """
     قص الجسم الكامل للشخص اعتماداً على قناع YOLO. تُمرَّر القصاصة لاحقاً إلى MiVOLO
-    (يكتشف الوجه والجسد بنفسه داخلها)، وتُرتَّب العينات حسب مساحة القصاصة.
+    (يكتشف الوجه والجسد بنفسه داخلها)، وتُرتَّب العينات حسب جودة المساحة وتنوّع الزمن.
     """
     h, w = mask_2d.shape
     ys, xs = np.where(mask_2d > 0.15)
@@ -228,10 +252,53 @@ def extract_body_crop(frame: np.ndarray, mask_2d: np.ndarray, pad: int = 10):
     if pw < 20 or ph < 20:
         return None
 
+    cx = 0.5 * (x1 + x2) / max(1.0, float(w))
+    cy = 0.5 * (y1 + y2) / max(1.0, float(h))
+
     return {
         "body": frame[y1:y2, x1:x2].copy(),  # نسخة حتى لا يبقى الإطار الكامل محجوزاً في الذاكرة
         "quality_score": float(pw * ph),
+        "center": (cx, cy),
     }
+
+def _select_diverse_samples(track_list: list, max_keep: int) -> list:
+    """
+    اختيار عينات تمثّل المسار عبر الزمن وكذلك القصاصات الواضحة (أكبر مساحة)،
+    لتجنب حصر جميع العينات في لحظة واحدة من الفيديو الطويل.
+    """
+    if len(track_list) <= max_keep:
+        return track_list
+
+    sorted_by_time = sorted(track_list, key=lambda x: x["frame_num"])
+    id_to_pos = {id(item): idx for idx, item in enumerate(sorted_by_time)}
+    n_slots = max_keep
+    selected = []
+    used_indices = set()
+
+    for slot in range(n_slots):
+        start_idx = (slot * len(sorted_by_time)) // n_slots
+        end_idx = ((slot + 1) * len(sorted_by_time)) // n_slots
+        if end_idx <= start_idx:
+            end_idx = min(len(sorted_by_time), start_idx + 1)
+        bucket = sorted_by_time[start_idx:end_idx]
+        if bucket:
+            best_in_bucket = max(bucket, key=lambda x: x["quality_score"])
+            orig_pos = id_to_pos[id(best_in_bucket)]
+            if orig_pos not in used_indices:
+                selected.append(best_in_bucket)
+                used_indices.add(orig_pos)
+
+    if len(selected) < max_keep:
+        remaining = [
+            (i, item) for i, item in enumerate(sorted_by_time) if i not in used_indices
+        ]
+        remaining.sort(key=lambda pair: pair[1]["quality_score"], reverse=True)
+        for i, item in remaining[: max_keep - len(selected)]:
+            selected.append(item)
+            used_indices.add(i)
+
+    selected.sort(key=lambda x: x["frame_num"])
+    return selected
 
 def _box_iou(a, b) -> float:
     ix1, iy1 = max(a[0], b[0]), max(a[1], b[1])
@@ -267,9 +334,12 @@ def _predict_crop_mivolo(crop):
         for i in range(n):
             g = detected.genders[i]
             s = detected.gender_scores[i]
-            if g not in ("male", "female") or s is None:
+            if g not in ("male", "female"):
                 continue
-            item = (tuple(float(v) for v in xyxy[i]), g, float(s))
+            if s is None or (isinstance(s, np.ndarray) and s.size == 0):
+                continue
+            s_val = float(np.asarray(s).reshape(-1)[0]) if isinstance(s, np.ndarray) else float(s)
+            item = (tuple(float(v) for v in xyxy[i]), g, s_val)
             name = str(res.names[int(cls_ids[i])]).lower()
             if name == "person":
                 persons.append(item)
@@ -323,46 +393,76 @@ def classify_samples_mivolo(samples: list):
 
 def _finalize_track_decision(v: dict, target_gender: str):
     """
-    حسم قرار المسار بعد تجميع وتصنيف كل عينات هذا الشخص عبر الفيديو.
+    حسم قرار المسار بعد تجميع وتصنيف عينات هذا الشخص عبر الفيديو.
+    إذا ظهرت عينة واحدة على الأقل مطابقة للجندر المستهدف (target_gender)، تُعدّ نتيجة قاطعة لاعتماد كامل الـ Object.
     """
     f_votes = v["female_votes"]
     m_votes = v["male_votes"]
     f_weight = v["female_weight"]
     m_weight = v["male_weight"]
+    is_untracked = bool(v.get("is_untracked", False))
 
     if target_gender == "female":
-        if v["strong_face_female"] and m_weight == 0.0:
-            v["resolved_gender"] = "female"
-            v["decision_reason"] = "strong_face_female"
-        elif f_votes >= MIN_CONFIRM_VOTES and f_weight > max(1.8, m_weight * 1.8):
-            v["resolved_gender"] = "female"
-            v["decision_reason"] = "confirmed_target_female"
-        elif f_votes >= 2 and f_weight > max(1.3, m_weight * 1.8):
-            v["resolved_gender"] = "female"
-            v["decision_reason"] = "final_weighted_female"
-        elif (v["strong_face_male"] and f_weight == 0.0) or (m_votes >= 2 and m_weight > f_weight * 1.4) or (m_weight > f_weight):
-            v["resolved_gender"] = "male"
-            v["decision_reason"] = "confirmed_opposite_male"
+        if is_untracked:
+            if f_votes >= 2 and f_weight > max(1.6, m_weight * 1.8):
+                v["resolved_gender"] = "female"
+                v["decision_reason"] = "untracked_confirmed_female"
+            elif v["strong_face_female"] and f_weight >= 0.95 and m_weight == 0.0 and v["samples"] <= 2:
+                v["resolved_gender"] = "female"
+                v["decision_reason"] = "untracked_single_strong_female"
+            elif (v["strong_face_male"] and f_weight == 0.0) or (m_weight > f_weight):
+                v["resolved_gender"] = "male"
+                v["decision_reason"] = "untracked_opposite_male"
+            else:
+                v["resolved_gender"] = "unknown"
+                v["decision_reason"] = "untracked_insufficient_female_evidence"
         else:
-            v["resolved_gender"] = "unknown"
-            v["decision_reason"] = "insufficient_female_evidence"
+            if v["strong_face_female"] and m_weight == 0.0:
+                v["resolved_gender"] = "female"
+                v["decision_reason"] = "strong_face_female"
+            elif f_votes >= MIN_CONFIRM_VOTES and f_weight > max(1.8, m_weight * 1.8):
+                v["resolved_gender"] = "female"
+                v["decision_reason"] = "confirmed_target_female"
+            elif f_votes >= 2 and f_weight > max(1.3, m_weight * 1.8):
+                v["resolved_gender"] = "female"
+                v["decision_reason"] = "final_weighted_female"
+            elif (v["strong_face_male"] and f_weight == 0.0) or (m_votes >= 2 and m_weight > f_weight * 1.4) or (m_weight > f_weight):
+                v["resolved_gender"] = "male"
+                v["decision_reason"] = "confirmed_opposite_male"
+            else:
+                v["resolved_gender"] = "unknown"
+                v["decision_reason"] = "insufficient_female_evidence"
 
     elif target_gender == "male":
-        if v["strong_face_male"] and f_weight == 0.0:
-            v["resolved_gender"] = "male"
-            v["decision_reason"] = "strong_face_male"
-        elif m_votes >= MIN_CONFIRM_VOTES and m_weight > max(1.8, f_weight * 1.8):
-            v["resolved_gender"] = "male"
-            v["decision_reason"] = "confirmed_target_male"
-        elif m_votes >= 2 and m_weight > max(1.3, f_weight * 1.8):
-            v["resolved_gender"] = "male"
-            v["decision_reason"] = "final_weighted_male"
-        elif (v["strong_face_female"] and m_weight == 0.0) or (f_votes >= 2 and f_weight > m_weight * 1.4) or (f_weight > m_weight):
-            v["resolved_gender"] = "female"
-            v["decision_reason"] = "confirmed_opposite_female"
+        if is_untracked:
+            if m_votes >= 2 and m_weight > max(1.6, f_weight * 1.8):
+                v["resolved_gender"] = "male"
+                v["decision_reason"] = "untracked_confirmed_male"
+            elif v["strong_face_male"] and m_weight >= 0.95 and f_weight == 0.0 and v["samples"] <= 2:
+                v["resolved_gender"] = "male"
+                v["decision_reason"] = "untracked_single_strong_male"
+            elif (v["strong_face_female"] and m_weight == 0.0) or (f_weight > m_weight):
+                v["resolved_gender"] = "female"
+                v["decision_reason"] = "untracked_opposite_female"
+            else:
+                v["resolved_gender"] = "unknown"
+                v["decision_reason"] = "untracked_insufficient_male_evidence"
         else:
-            v["resolved_gender"] = "unknown"
-            v["decision_reason"] = "insufficient_male_evidence"
+            if v["strong_face_male"] and f_weight == 0.0:
+                v["resolved_gender"] = "male"
+                v["decision_reason"] = "strong_face_male"
+            elif m_votes >= MIN_CONFIRM_VOTES and m_weight > max(1.8, f_weight * 1.8):
+                v["resolved_gender"] = "male"
+                v["decision_reason"] = "confirmed_target_male"
+            elif m_votes >= 2 and m_weight > max(1.3, f_weight * 1.8):
+                v["resolved_gender"] = "male"
+                v["decision_reason"] = "final_weighted_male"
+            elif (v["strong_face_female"] and m_weight == 0.0) or (f_votes >= 2 and f_weight > m_weight * 1.4) or (f_weight > m_weight):
+                v["resolved_gender"] = "female"
+                v["decision_reason"] = "confirmed_opposite_female"
+            else:
+                v["resolved_gender"] = "unknown"
+                v["decision_reason"] = "insufficient_male_evidence"
     else:
         v["resolved_gender"] = "unknown"
         v["decision_reason"] = "no_target"
@@ -370,23 +470,56 @@ def _finalize_track_decision(v: dict, target_gender: str):
     v["decided"] = True
 
 def apply_local_roi_blur(frame: np.ndarray, alpha: np.ndarray, ksize: int) -> np.ndarray:
-    """تطبيق البلور والمزج على المستطيل المحيط بالقناع فقط لتسريع المعالجة."""
-    ys, xs = np.where(alpha > 0.01)
-    if len(xs) == 0 or len(ys) == 0:
+    """تطبيق البلور والمزج بأمان كامل على كامل الإطار أو المستطيل المحدد بدون أي عدم تطابق أبعاد."""
+    if frame is None or getattr(frame, "size", 0) == 0 or alpha is None or getattr(alpha, "size", 0) == 0:
         return frame
 
-    h, w = frame.shape[:2]
+    src_frame = np.ascontiguousarray(frame)
+    if src_frame.ndim == 2:
+        src_frame = cv2.cvtColor(src_frame, cv2.COLOR_GRAY2BGR)
+    elif src_frame.ndim == 3 and src_frame.shape[2] == 4:
+        src_frame = src_frame[:, :, :3]
+
+    h, w = src_frame.shape[:2]
+    a2d = np.asarray(alpha, dtype=np.float32)
+    if a2d.ndim > 2:
+        a2d = a2d[..., 0]
+    a2d = np.ascontiguousarray(a2d)
+    if a2d.shape[:2] != (h, w):
+        a2d = cv2.resize(a2d, (w, h), interpolation=cv2.INTER_LINEAR)
+    a2d = np.clip(a2d, 0.0, 1.0)
+
+    ys, xs = np.where(a2d > 0.01)
+    if len(xs) == 0 or len(ys) == 0:
+        return src_frame
+
     pad = max(16, ksize // 2)
     x1 = max(0, int(xs.min()) - pad)
     y1 = max(0, int(ys.min()) - pad)
     x2 = min(w, int(xs.max()) + pad + 1)
     y2 = min(h, int(ys.max()) + pad + 1)
+    if x2 <= x1 or y2 <= y1:
+        return src_frame
 
-    out_frame = frame.copy()
-    roi = out_frame[y1:y2, x1:x2]
-    roi_alpha = alpha[y1:y2, x1:x2, None]
-    blurred_roi = cv2.blur(roi, (ksize, ksize))
-    out_frame[y1:y2, x1:x2] = (blurred_roi * roi_alpha + roi * (1.0 - roi_alpha)).astype(np.uint8)
+    out_frame = src_frame.copy()
+    roi_orig = np.ascontiguousarray(out_frame[y1:y2, x1:x2], dtype=np.float32)
+    rh, rw = roi_orig.shape[:2]
+
+    roi_blur = cv2.blur(roi_orig, (ksize, ksize)).astype(np.float32)
+    if roi_blur.shape[:2] != (rh, rw):
+        roi_blur = cv2.resize(roi_blur, (rw, rh), interpolation=cv2.INTER_LINEAR)
+
+    roi_a = np.ascontiguousarray(a2d[y1:y2, x1:x2], dtype=np.float32)
+    if roi_a.shape[:2] != (rh, rw):
+        roi_a = cv2.resize(roi_a, (rw, rh), interpolation=cv2.INTER_LINEAR)
+
+    # حساب كل قناة بشكل صريح لضمان عدم حدوث أي اختلاف في أبعاد المصفوفات
+    for c in range(3):
+        ch_orig = roi_orig[:, :, c]
+        ch_blur = roi_blur[:, :, c]
+        ch_out = ch_blur * roi_a + ch_orig * (1.0 - roi_a)
+        out_frame[y1:y2, x1:x2, c] = np.clip(ch_out, 0.0, 255.0).astype(np.uint8)
+
     return out_frame
 
 async def Process_Video_Pro_Segmentation(file_path, replied, BlurRate, isfull, Ranges, gender_filter="all"):
@@ -432,9 +565,13 @@ async def Process_Video_Pro_Segmentation(file_path, replied, BlurRate, isfull, R
         # المرحلة 1/3: استخراج جميع الـ Objects وتتبّعها وحفظ الأقنعة + القصاصات
         # =====================================================================
         frame_records = {}
-        collected_samples = {}       # tid -> list of sample dicts
-        last_sample_frame = {}       # tid -> last frame index sampled
+        collected_samples = {}       # track_key -> list of sample dicts
+        last_sample_frame = {}       # track_key -> last frame index sampled
+        untracked_buckets = []       # list of dicts for tid < 0 proximity buckets
+        next_untracked_id = -1000
         sample_interval_frames = max(1, int(round(fps * SAMPLE_INTERVAL_SEC)))
+        max_pool_per_track = max(MAX_SAMPLES_PER_TRACK * 3, 24)
+        last_edit_ref = [0.0]
 
         t_stage1_track = 0.0
         t_stage2_gender = 0.0
@@ -456,12 +593,11 @@ async def Process_Video_Pro_Segmentation(file_path, replied, BlurRate, isfull, R
 
             if ret_num % progress_step == 0 and duration_sec > 0:
                 cur_sec = min(ret_num / fps, duration_sec)
-                try:
-                    await replied.edit_text(
-                        f"🔍 المرحلة 1/3 (استخراج وتتبع الـ Objects)... `{fmt_clock(cur_sec)}-{fmt_clock(duration_sec)}`"
-                    )
-                except Exception:
-                    pass
+                await safe_edit_text(
+                    replied,
+                    f"🔍 المرحلة 1/3 (استخراج وتتبع الـ Objects)... `{fmt_clock(cur_sec)}-{fmt_clock(duration_sec)}`",
+                    last_edit_ref,
+                )
 
             if not ispermit:
                 continue
@@ -488,117 +624,221 @@ async def Process_Video_Pro_Segmentation(file_path, replied, BlurRate, isfull, R
 
                 records_this_frame = []
                 for idx, m in enumerate(masks):
-                    tid = raw_ids[idx] if idx < len(raw_ids) else -1
+                    raw_tid = raw_ids[idx] if idx < len(raw_ids) else -1
                     bin_mask = (m > 0.30).astype(np.uint8)
-                    records_this_frame.append((tid, bin_mask))
+                    is_untracked = raw_tid < 0
+                    track_key = raw_tid
 
-                    if use_gender_filter:
-                        last_f = last_sample_frame.get(tid, -999999)
+                    full_m = None
+                    sample = None
+                    if use_gender_filter or is_untracked:
+                        full_m = cv2.resize(
+                            bin_mask.astype(np.float32),
+                            (width, height),
+                            interpolation=cv2.INTER_NEAREST
+                        )
+                        sample = extract_body_crop(frame, full_m)
+
+                    if is_untracked:
+                        cx, cy = sample["center"] if sample is not None else (0.5, 0.5)
+                        matched_bucket = None
+                        for b in untracked_buckets:
+                            dist = ((b["cx"] - cx) ** 2 + (b["cy"] - cy) ** 2) ** 0.5
+                            if (ret_num - b["last_frame"]) <= int(round(fps * 1.5)) and dist <= 0.18:
+                                matched_bucket = b
+                                break
+                        if matched_bucket is None:
+                            matched_bucket = {
+                                "key": next_untracked_id,
+                                "cx": cx,
+                                "cy": cy,
+                                "last_frame": ret_num,
+                            }
+                            next_untracked_id -= 1
+                            untracked_buckets.append(matched_bucket)
+                        else:
+                            matched_bucket["cx"] = cx
+                            matched_bucket["cy"] = cy
+                            matched_bucket["last_frame"] = ret_num
+                        track_key = matched_bucket["key"]
+
+                    records_this_frame.append((track_key, is_untracked, bin_mask))
+
+                    if use_gender_filter and sample is not None:
+                        last_f = last_sample_frame.get(track_key, -999999)
                         if (ret_num - last_f) >= sample_interval_frames:
-                            full_m = cv2.resize(
-                                bin_mask.astype(np.float32),
-                                (width, height),
-                                interpolation=cv2.INTER_NEAREST
-                            )
-                            sample = extract_body_crop(frame, full_m)
-                            if sample is not None:
-                                sample["frame_num"] = ret_num
-                                sample["sec"] = round(ret_num / fps, 2)
-                                track_list = collected_samples.setdefault(tid, [])
-                                track_list.append(sample)
-                                # الاحتفاظ بأعلى MAX_SAMPLES_PER_TRACK عينة جودة (الأولوية للقصاصات الأكبر مساحة)
-                                if len(track_list) > MAX_SAMPLES_PER_TRACK:
-                                    track_list.sort(key=lambda x: x["quality_score"], reverse=True)
-                                    del track_list[MAX_SAMPLES_PER_TRACK:]
-                                last_sample_frame[tid] = ret_num
+                            sample["frame_num"] = ret_num
+                            sample["sec"] = round(ret_num / fps, 2)
+                            sample["is_untracked"] = is_untracked
+                            pool = collected_samples.setdefault(track_key, [])
+                            pool.append(sample)
+                            if len(pool) > max_pool_per_track:
+                                pool.sort(key=lambda x: x["quality_score"], reverse=True)
+                                del pool[max_pool_per_track:]
+                            last_sample_frame[track_key] = ret_num
 
                 frame_records[ret_num] = records_this_frame
 
         # =====================================================================
-        # المرحلة 2/3: فحص الجندر للـ Objects المستخرجة عبر النماذج الموزونة
+        # المرحلة 2/3: فحص الجندر وفصل المقاطع المتناوبة (مثل ذكر -> أنثى -> ذكر) كـ Objects مستقلة
         # =====================================================================
         track_votes = {}
         approved_tids = set()
+        split_boundaries = {}  # orig_tid -> list of (start_frame_num, sub_tid)
+        split_tids = set()
         sample_logs = []
 
         if use_gender_filter:
-            try:
-                await replied.edit_text(
-                    f"🧠 المرحلة 2/3 (فحص الجندر بدقة لـ {len(collected_samples)} شخص/مسار)..."
-                )
-            except Exception:
-                pass
+            await safe_edit_text(
+                replied,
+                f"🧠 المرحلة 2/3 (فحص الجندر وفصل المقاطع لـ {len(collected_samples)} شخص/مسار)...",
+                last_edit_ref,
+                force=True,
+            )
 
             t0_gender = time.perf_counter()
 
-            # تجميع كل العينات المختارة لكل المسارات لتشغيلها دفعة واحدة (Batch) بأعلى سرعة ودقة
-            flat_tids = []
-            flat_samples = []
-            for tid, s_list in collected_samples.items():
-                track_votes[tid] = {
-                    "female_votes": 0,
-                    "male_votes": 0,
-                    "female_weight": 0.0,
-                    "male_weight": 0.0,
-                    "strong_face_female": False,
-                    "strong_face_male": False,
-                    "samples": 0,
-                    "decided": False,
-                    "resolved_gender": None,
-                    "decision_reason": None
-                }
-                # ترتيب عينات المسار زمنياً لوضوح السجل
-                s_list.sort(key=lambda x: x["frame_num"])
-                for s in s_list:
-                    flat_tids.append(tid)
-                    flat_samples.append(s)
+            # تصنيف جميع العينات المجمعة زمنياً لكل مسار أصلي أولاً
+            ordered_items = []
+            for orig_tid, pool in collected_samples.items():
+                chron_pool = sorted(pool, key=lambda x: x["frame_num"])
+                for s in chron_pool:
+                    ordered_items.append((orig_tid, s))
 
-            if flat_samples:
-                batch_preds, batch_dbg = classify_samples_mivolo(flat_samples)
+            if ordered_items:
+                all_samples = [s for _, s in ordered_items]
+                all_preds, all_dbg = classify_samples_mivolo(all_samples)
+                preds_by_tid = {}
+                for (orig_tid, s), pred, dbg in zip(ordered_items, all_preds, all_dbg):
+                    preds_by_tid.setdefault(orig_tid, []).append((s, pred, dbg))
 
-                for tid, sample_obj, (g_label, g_conf, is_strong_face), dbg in zip(
-                    flat_tids, flat_samples, batch_preds, batch_dbg
-                ):
-                    v = track_votes[tid]
-                    v["samples"] += 1
+                sub_pools = {}
+                for orig_tid, items in preds_by_tid.items():
+                    seg_idx = 0
+                    cur_sub_tid = f"{orig_tid}_s{seg_idx}"
+                    cur_gender = None
+                    pending_gender = None
+                    pending_count = 0
+                    pending_start_frame = None
+                    boundaries = [(0, cur_sub_tid)]
 
-                    if g_label == "female":
-                        v["female_votes"] += 1
-                        v["female_weight"] += g_conf
-                        if is_strong_face:
-                            v["strong_face_female"] = True
-                    elif g_label == "male":
-                        v["male_votes"] += 1
-                        v["male_weight"] += g_conf
-                        if is_strong_face:
-                            v["strong_face_male"] = True
+                    for s, (g_label, g_conf, is_strong_face), dbg in items:
+                        f_num = int(s["frame_num"])
+                        if g_label in ("male", "female"):
+                            if cur_gender is None:
+                                cur_gender = g_label
+                                pending_gender = None
+                                pending_count = 0
+                            elif g_label == cur_gender:
+                                pending_gender = None
+                                pending_count = 0
+                            else:
+                                if pending_gender == g_label:
+                                    pending_count += 1
+                                else:
+                                    pending_gender = g_label
+                                    pending_count = 1
+                                    pending_start_frame = f_num
 
-                    entry = (
-                        f"tid={tid} f={sample_obj['frame_num']}({sample_obj['sec']}s) "
-                        f"s#{v['samples']}/{len(collected_samples[tid])} "
-                        f"src={dbg['src']} MV={dbg['mv']} -> {g_label}:{g_conf:.2f} "
-                        f"W=(F:{v['female_weight']:.2f}, M:{v['male_weight']:.2f})"
+                                # فصل مقطع جديد:
+                                # - عند الدخول للجندر المستهدف: نبدأ مبكراً (وجه حاسم أو عينتان متتاليتان) حتى لا يفوت بداية الكلام.
+                                # - عند الخروج من الجندر المستهدف: نطلب 3 عينات متتالية (أو وجه حاسم + عينة) حتى لا ينقطع الكلام بسبب فلتة عابرة.
+                                entering_target = (g_label == gender_filter)
+                                should_split = (
+                                    (entering_target and (is_strong_face or pending_count >= 2))
+                                    or ((not entering_target) and (pending_count >= 3 or (is_strong_face and pending_count >= 2)))
+                                )
+                                if should_split:
+                                    seg_idx += 1
+                                    cur_sub_tid = f"{orig_tid}_s{seg_idx}"
+                                    split_frame = pending_start_frame if pending_start_frame is not None else f_num
+                                    boundaries.append((split_frame, cur_sub_tid))
+                                    cur_gender = g_label
+                                    pending_gender = None
+                                    pending_count = 0
+                                    pending_start_frame = None
+
+                        s_copy = dict(s)
+                        s_copy["_pred"] = (g_label, g_conf, is_strong_face)
+                        s_copy["_dbg"] = dbg
+                        s_copy["_sub_tid"] = cur_sub_tid
+                        sub_pools.setdefault(cur_sub_tid, []).append(s_copy)
+
+                    if seg_idx > 0:
+                        split_tids.add(orig_tid)
+                        split_boundaries[orig_tid] = boundaries
+                        print(f"✂️ [TRACK_SPLIT] tid={orig_tid} split into {len(boundaries)} segments: {boundaries}")
+
+                selected_per_sub = {}
+                for sub_tid, spool in sub_pools.items():
+                    chosen = _select_diverse_samples(spool, MAX_SAMPLES_PER_TRACK)
+                    selected_per_sub[sub_tid] = chosen
+                    is_untracked = any(s.get("is_untracked", False) for s in chosen)
+                    v = {
+                        "female_votes": 0,
+                        "male_votes": 0,
+                        "female_weight": 0.0,
+                        "male_weight": 0.0,
+                        "strong_face_female": False,
+                        "strong_face_male": False,
+                        "samples": 0,
+                        "is_untracked": is_untracked,
+                        "decided": False,
+                        "resolved_gender": None,
+                        "decision_reason": None
+                    }
+                    total_for_sub = len(chosen)
+                    for sample_obj in chosen:
+                        g_label, g_conf, is_strong_face = sample_obj["_pred"]
+                        dbg = sample_obj["_dbg"]
+                        v["samples"] += 1
+
+                        if g_label == "female":
+                            v["female_votes"] += 1
+                            v["female_weight"] += g_conf
+                            if is_strong_face:
+                                v["strong_face_female"] = True
+                        elif g_label == "male":
+                            v["male_votes"] += 1
+                            v["male_weight"] += g_conf
+                            if is_strong_face:
+                                v["strong_face_male"] = True
+
+                        entry = (
+                            f"tid={sub_tid} f={sample_obj['frame_num']}({sample_obj['sec']}s) "
+                            f"s#{v['samples']}/{total_for_sub} "
+                            f"src={dbg['src']} MV={dbg['mv']} -> {g_label}:{g_conf:.2f} "
+                            f"W=(F:{v['female_weight']:.2f}, M:{v['male_weight']:.2f})"
+                        )
+                        sample_logs.append(entry)
+                        print(f"🧪 [STAGE2_SAMPLE] {entry}")
+
+                    _finalize_track_decision(v, gender_filter)
+                    track_votes[sub_tid] = v
+                    if v["resolved_gender"] == gender_filter:
+                        approved_tids.add(sub_tid)
+                    print(
+                        f"⏹️ [STAGE2_DECISION] tid={sub_tid} target={gender_filter} "
+                        f"samples={v['samples']}/{MAX_SAMPLES_PER_TRACK} "
+                        f"W=(F:{v['female_weight']:.2f}, M:{v['male_weight']:.2f}) -> {v['resolved_gender']} "
+                        f"[{v['decision_reason']}, approved={sub_tid in approved_tids}]"
                     )
-                    sample_logs.append(entry)
-                    print(f"🧪 [STAGE2_SAMPLE] {entry}")
-
-            # حسم القرار النهائي لكل مسار بناءً على كامل عيناته عبر الفيديو
-            for tid, v in track_votes.items():
-                _finalize_track_decision(v, gender_filter)
-                if v["resolved_gender"] == gender_filter:
-                    approved_tids.add(tid)
-                print(
-                    f"⏹️ [STAGE2_DECISION] tid={tid} target={gender_filter} "
-                    f"samples={v['samples']}/{MAX_SAMPLES_PER_TRACK} "
-                    f"W=(F:{v['female_weight']:.2f}, M:{v['male_weight']:.2f}) -> {v['resolved_gender']} "
-                    f"[{v['decision_reason']}, approved={tid in approved_tids}]"
-                )
 
             t_stage2_gender = time.perf_counter() - t0_gender
-            print(f"⚡ Stage 2 Approved ({gender_filter}): {sorted(approved_tids)} | Total samples: {len(sample_logs)}")
+            print(f"⚡ Stage 2 Approved ({gender_filter}): {sorted(approved_tids, key=lambda x: (0, x) if isinstance(x, int) else (1, str(x)))} | Total samples: {len(sample_logs)}")
 
-            # تحرير قصاصات الصور من الذاكرة قبل بدء المرحلة الثالثة
             collected_samples.clear()
+
+        def _resolve_effective_tid(orig_tid, frame_num: int):
+            if orig_tid not in split_tids:
+                return orig_tid
+            active_sub = f"{orig_tid}_s0"
+            for start_f, sub_id in split_boundaries.get(orig_tid, ()):
+                if frame_num >= start_f:
+                    active_sub = sub_id
+                else:
+                    break
+            return active_sub
 
         # =====================================================================
         # المرحلة 3/3: تطبيق البلور على الأقنعة المعتمدة من أول ظهور للـ Object
@@ -627,6 +867,8 @@ async def Process_Video_Pro_Segmentation(file_path, replied, BlurRate, isfull, R
 
             if np.any(buf_alpha > 0.01):
                 merged = apply_local_roi_blur(buf_frame, buf_alpha, ksize)
+                if merged.shape[1] != width or merged.shape[0] != height:
+                    merged = cv2.resize(merged, (width, height), interpolation=cv2.INTER_LINEAR)
                 out.write(merged)
             else:
                 out.write(buf_frame)
@@ -638,25 +880,37 @@ async def Process_Video_Pro_Segmentation(file_path, replied, BlurRate, isfull, R
             if not ret:
                 break
             ret_num += 1
+            if frame.shape[1] != width or frame.shape[0] != height:
+                frame = cv2.resize(frame, (width, height), interpolation=cv2.INTER_LINEAR)
 
             if ret_num % progress_step == 0 and duration_sec > 0:
                 cur_sec = min(ret_num / fps, duration_sec)
-                try:
-                    await replied.edit_text(
-                        f"🎬 المرحلة 3/3 (تطبيق البلور)... `{fmt_clock(cur_sec)}-{fmt_clock(duration_sec)}`"
-                    )
-                except Exception:
-                    pass
+                await safe_edit_text(
+                    replied,
+                    f"🎬 المرحلة 3/3 (تطبيق البلور)... `{fmt_clock(cur_sec)}-{fmt_clock(duration_sec)}`",
+                    last_edit_ref,
+                )
 
             records = frame_records.get(ret_num)
             if records:
                 combined_small = None
-                for tid, bin_mask in records:
-                    if (not use_gender_filter) or (tid in approved_tids):
+                for tid, _is_untracked, bin_mask in records:
+                    eff_tid = _resolve_effective_tid(tid, ret_num) if use_gender_filter else tid
+                    if (not use_gender_filter) or (eff_tid in approved_tids):
+                        if bin_mask.ndim > 2:
+                            bin_mask = bin_mask[..., 0]
                         if combined_small is None:
-                            combined_small = bin_mask.copy()
+                            combined_small = bin_mask.astype(np.uint8).copy()
                         else:
-                            combined_small = np.maximum(combined_small, bin_mask)
+                            if bin_mask.shape != combined_small.shape:
+                                bin_mask_resized = cv2.resize(
+                                    bin_mask.astype(np.uint8),
+                                    (combined_small.shape[1], combined_small.shape[0]),
+                                    interpolation=cv2.INTER_NEAREST
+                                )
+                            else:
+                                bin_mask_resized = bin_mask.astype(np.uint8)
+                            combined_small = np.maximum(combined_small, bin_mask_resized)
 
                 if combined_small is not None and np.any(combined_small > 0):
                     current_mask = cv2.resize(
@@ -666,6 +920,8 @@ async def Process_Video_Pro_Segmentation(file_path, replied, BlurRate, isfull, R
                     )
                     hold_counter = max_hold_frames
                     alpha = refine_person_mask(current_mask)
+                    if last_alpha.shape != alpha.shape:
+                        last_alpha = cv2.resize(last_alpha, (width, height), interpolation=cv2.INTER_LINEAR)
                     alpha = np.maximum(alpha, last_alpha * 0.7)
                     last_alpha = alpha
 
@@ -675,11 +931,15 @@ async def Process_Video_Pro_Segmentation(file_path, replied, BlurRate, isfull, R
                         idx = buf_len - i
                         back_weight = max(0.35, 1.0 - (i / (pre_roll_frames + 1)) * 0.65)
                         prev_f, prev_a = buffer[idx]
+                        if prev_a.shape != alpha.shape:
+                            prev_a = cv2.resize(prev_a, (width, height), interpolation=cv2.INTER_LINEAR)
                         updated_a = np.maximum(prev_a, alpha * back_weight)
                         buffer[idx] = (prev_f, updated_a)
                 elif hold_counter > 0:
                     hold_counter -= 1
                     decay = (hold_counter + 1) / (max_hold_frames + 1)
+                    if last_alpha.shape != (height, width):
+                        last_alpha = cv2.resize(last_alpha, (width, height), interpolation=cv2.INTER_LINEAR)
                     alpha = last_alpha * decay
                     last_alpha = alpha
                 else:
@@ -688,6 +948,8 @@ async def Process_Video_Pro_Segmentation(file_path, replied, BlurRate, isfull, R
             elif hold_counter > 0:
                 hold_counter -= 1
                 decay = (hold_counter + 1) / (max_hold_frames + 1)
+                if last_alpha.shape != (height, width):
+                    last_alpha = cv2.resize(last_alpha, (width, height), interpolation=cv2.INTER_LINEAR)
                 alpha = last_alpha * decay
                 last_alpha = alpha
             else:
@@ -839,6 +1101,8 @@ async def _video_handler(client, message):
         await message.reply_video(blurred_vid)
         upload_succeeded = True
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         await replied.edit_text(f'❌ حدث خطأ: {str(e)}')
     finally:
         if upload_succeeded or not os.path.exists(user_dir):
