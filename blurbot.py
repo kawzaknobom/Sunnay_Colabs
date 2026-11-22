@@ -3,6 +3,8 @@ nest_asyncio.apply()
 
 Bot_Token = os.getenv('TOKEN')
 
+Api_Id = 15952578
+Api_Hash = '3600ce5f8f9b9e18cba0f318fa0e3600'
 from pyrogram import Client, filters, idle
 from pyrogram.types import ReplyKeyboardMarkup, KeyboardButton
 import cv2, numpy as np
@@ -47,7 +49,7 @@ def _init_yunet():
         return
     try:
         yunet_detector = cv2.FaceDetectorYN.create(
-            YUNET_PATH, "", (320, 320), score_threshold=0.30, nms_threshold=0.3, top_k=15
+            YUNET_PATH, "", (320, 320), score_threshold=0.50, nms_threshold=0.3, top_k=15
         )
         print("✅ YuNet face detector loaded!")
     except Exception as e:
@@ -56,16 +58,21 @@ def _init_yunet():
 
 _init_yunet()
 
-# النموذج الأول: متخصص في الوجه (يُفحص أولاً عند وضوح الوجه أو الرأس)
+# النموذج الأول: متخصص في الوجه (يُفحص فقط عند اكتشاف وجه حقيقي واضح)
 FACE_MODEL_ID = os.getenv('FACE_MODEL_ID', 'dima806/fairface_gender_image_detection')
-# النموذج الثاني: متخصص في الجسد (يُفحص عند عدم وضوح الوجه أو ضعف ثقة الوجه أو عدم المطابقة)
+# النموذج الثاني: متخصص في الجسد (يُفحص بعتبة صارمة عند غياب الوجه أو لدعم القرار)
 BODY_MODEL_ID = os.getenv('BODY_MODEL_ID', 'NTQAI/pedestrian_gender_recognition')
 
-# عتبات ثقة متوسطة: حتى 4 عينات كل 0.5 ثانية؛ تكفي عينة واحدة مطابقة لاعتماد البلور
-FACE_MIN_CONFIDENCE = float(os.getenv('FACE_MIN_CONFIDENCE', '0.52'))
-BODY_MIN_CONFIDENCE = float(os.getenv('BODY_MIN_CONFIDENCE', '0.55'))
-SAMPLE_INTERVAL_SEC = float(os.getenv('SAMPLE_INTERVAL_SEC', '0.5'))
-MAX_SAMPLES_PER_TRACK = int(os.getenv('MAX_SAMPLES_PER_TRACK', '4'))
+# عتبات ثقة صارمة لتجنب الإيجابيات الكاذبة (False Positives)
+FACE_MIN_CONFIDENCE = float(os.getenv('FACE_MIN_CONFIDENCE', '0.68'))
+FACE_HIGH_CONFIDENCE = float(os.getenv('FACE_HIGH_CONFIDENCE', '0.90'))
+BODY_MIN_CONFIDENCE = float(os.getenv('BODY_MIN_CONFIDENCE', '0.78'))
+MIN_FACE_SIZE = int(os.getenv('MIN_FACE_SIZE', '28'))
+YUNET_MIN_SCORE = float(os.getenv('YUNET_MIN_SCORE', '0.50'))
+
+SAMPLE_INTERVAL_SEC = float(os.getenv('SAMPLE_INTERVAL_SEC', '0.4'))
+MAX_SAMPLES_PER_TRACK = int(os.getenv('MAX_SAMPLES_PER_TRACK', '6'))
+MIN_CONFIRM_VOTES = int(os.getenv('MIN_CONFIRM_VOTES', '3'))
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -105,8 +112,6 @@ def _init_dual_models():
 
 _init_dual_models()
 
-Api_Id = 15952578
-Api_Hash = '3600ce5f8f9b9e18cba0f318fa0e3600'
 Audio_Forms = (".mp3", ".ogg", ".m4a", ".aac", ".flac", ".wav", ".wma", ".opus", ".3gpp")
 
 Settings_Dict = {}
@@ -203,6 +208,10 @@ async def Vid_Mk(Vid, Aud):
     return Vid_Res
 
 def Pyrogram_Client(Bot_Token):
+    if not Bot_Token or ':' not in Bot_Token:
+        raise ValueError("متغير البيئة TOKEN غير مضبوط بشكل صحيح.")
+    if not Api_Id or not Api_Hash:
+        raise ValueError("متغيرا البيئة API_ID و API_HASH مطلوبان للتشغيل.")
     Bot_Identifier = Bot_Token.split(':')[0]
     return Client(
         Bot_Identifier + '_session_seg_bot',
@@ -236,8 +245,7 @@ def refine_person_mask(combined_mask: np.ndarray) -> np.ndarray:
 
 def extract_body_and_face(frame: np.ndarray, mask_2d: np.ndarray, pad: int = 10):
     """
-    إرجاع قصاصة الجسم الكامل وقصاصة الوجه إذا تم اكتشافه عبر YuNet،
-    مع توفير قصاصة رأس احتياطية عند تعذر اكتشاف الوجه عبر YuNet.
+    إرجاع قصاصة الجسم الكامل وقصاصة الوجه الحقيقي فقط إذا اكتشفه YuNet بوضوح وحجم كافٍ.
     """
     h, w = mask_2d.shape
     ys, xs = np.where(mask_2d > 0.15)
@@ -249,7 +257,7 @@ def extract_body_and_face(frame: np.ndarray, mask_2d: np.ndarray, pad: int = 10)
     x2 = min(w, int(xs.max()) + pad)
     y2 = min(h, int(ys.max()) + pad)
     pw, ph = x2 - x1, y2 - y1
-    if pw < 16 or ph < 16:
+    if pw < 20 or ph < 20:
         return None
 
     body_crop = frame[y1:y2, x1:x2]
@@ -264,37 +272,26 @@ def extract_body_and_face(frame: np.ndarray, mask_2d: np.ndarray, pad: int = 10)
             if faces is not None and len(faces) > 0:
                 best = max(faces, key=lambda f: f[2] * f[3] * max(0.01, float(f[14])))
                 det_score = float(best[14])
-                yunet_score = det_score
                 fx, fy, fw, fh = int(best[0]), int(best[1]), int(best[2]), int(best[3])
-                if fw >= 14 and fh >= 14 and det_score >= 0.30:
-                    pad_x = max(4, int(0.30 * fw))
-                    pad_top = max(5, int(0.35 * fh))
-                    pad_bot = max(4, int(0.20 * fh))
+                if fw >= MIN_FACE_SIZE and fh >= MIN_FACE_SIZE and det_score >= YUNET_MIN_SCORE:
+                    pad_x = max(4, int(0.22 * fw))
+                    pad_top = max(5, int(0.28 * fh))
+                    pad_bot = max(4, int(0.16 * fh))
                     gx1 = max(0, fx - pad_x)
                     gy1 = max(0, fy - pad_top)
                     gx2 = min(pw, fx + fw + pad_x)
                     gy2 = min(ph, fy + fh + pad_bot)
-                    if gx2 - gx1 >= 14 and gy2 - gy1 >= 14:
+                    if gx2 - gx1 >= MIN_FACE_SIZE and gy2 - gy1 >= MIN_FACE_SIZE:
                         face_crop = body_crop[gy1:gy2, gx1:gx2]
                         face_detected = True
+                        yunet_score = det_score
         except Exception:
             face_crop = None
             face_detected = False
 
-    fallback_head_crop = None
-    head_h = max(16, int(ph * 0.32))
-    head_w = max(16, int(pw * 0.62))
-    cx = pw // 2
-    gx1 = max(0, cx - head_w // 2)
-    gx2 = min(pw, cx + head_w // 2)
-    gy2 = min(ph, head_h)
-    if gx2 - gx1 >= 16 and gy2 >= 16:
-        fallback_head_crop = body_crop[0:gy2, gx1:gx2]
-
     return {
         "body": body_crop,
         "face": face_crop,
-        "fallback_head": fallback_head_crop,
         "face_detected": face_detected,
         "yunet_score": yunet_score
     }
@@ -354,15 +351,17 @@ def _predict_single_model(crops: list, mdl, proc, tag: str):
 
     return results_out
 
-def classify_sequential_with_debug(samples: list, target_gender: str):
+def classify_samples_weighted(samples: list):
     """
-    فحص متسلسل بعتبات متوسطة مع أولوية مطلقة للجندر المستهدف (وخصوصاً female):
-    إذا أعطى نموذج الوجه أو نموذج الجسد الجندر المستهدف بنسبة معقولة (> 0.50)، يُقدَّم ويُعتمد فوراً.
+    تقييم محافظ لكل عينة:
+    - الوجه الحقيقي له الوزن الأكبر (0.75) عند دمجه مع الجسم (0.25).
+    - في حال غياب الوجه الحقيقي، يُشترط أن تتجاوز ثقة نموذج الجسم 0.78 لقبول العينة.
+    - العينة القادمة من الجسم فقط تُعطى وزناً مخففاً (0.65 من ثقتها) حتى لا تطغى على الوجه.
     """
     if not samples:
         return [], []
 
-    final_preds = ["unknown"] * len(samples)
+    results = [("unknown", 0.0, False)] * len(samples)
     debug_info = [
         {
             "src": "none",
@@ -374,119 +373,153 @@ def classify_sequential_with_debug(samples: list, target_gender: str):
         for s in samples
     ]
 
-    face_check_indices = []
-    face_check_crops = []
-    direct_body_indices = []
-    direct_body_crops = []
+    face_indices = []
+    face_crops = []
+    body_indices = []
+    body_crops = []
 
     for i, s in enumerate(samples):
-        if face_model is not None:
-            if s.get("face_detected") and s.get("face") is not None:
-                face_check_indices.append(i)
-                face_check_crops.append(s["face"])
-                debug_info[i]["src"] = "face"
-            elif s.get("fallback_head") is not None:
-                face_check_indices.append(i)
-                face_check_crops.append(s["fallback_head"])
-                debug_info[i]["src"] = "head"
-            elif s.get("body") is not None and getattr(s.get("body"), "size", 0) > 0 and body_model is not None:
-                direct_body_indices.append(i)
-                direct_body_crops.append(s["body"])
-                debug_info[i]["src"] = "body"
-        elif body_model is not None:
-            b_crop = s.get("body")
-            if b_crop is not None and getattr(b_crop, "size", 0) > 0:
-                direct_body_indices.append(i)
-                direct_body_crops.append(b_crop)
-                debug_info[i]["src"] = "body"
+        has_real_face = bool(s.get("face_detected")) and s.get("face") is not None and face_model is not None
+        has_body = s.get("body") is not None and getattr(s.get("body"), "size", 0) > 0 and body_model is not None
 
-    face_preds_map = {}
-    need_body_from_face_indices = []
-    need_body_from_face_crops = []
+        if has_real_face:
+            face_indices.append(i)
+            face_crops.append(s["face"])
+            debug_info[i]["src"] = "face"
 
-    if face_check_crops:
-        face_results = _predict_single_model(face_check_crops, face_model, face_processor, "FaceModel")
-        for idx, (f_lbl, f_conf) in zip(face_check_indices, face_results):
-            face_preds_map[idx] = (f_lbl, f_conf)
-            debug_info[idx]["f"] = f"{f_lbl}:{f_conf:.2f}"
+        if has_body:
+            body_indices.append(i)
+            body_crops.append(s["body"])
+            debug_info[i]["src"] = "face+body" if debug_info[i]["src"] == "face" else "body"
 
-            # أولوية للجندر المستهدف إذا أعطاه نموذج الوجه فوق 0.50 أو تجاوز العتبة المتوسطة
-            if target_gender in ("female", "male") and f_lbl == target_gender and f_conf > 0.50:
-                final_preds[idx] = f_lbl
-                continue
+    face_map = {}
+    if face_crops:
+        f_preds = _predict_single_model(face_crops, face_model, face_processor, "FaceModel")
+        for idx, (lbl, conf) in zip(face_indices, f_preds):
+            face_map[idx] = (lbl, conf)
+            debug_info[idx]["f"] = f"{lbl}:{conf:.2f}"
 
-            is_confident = f_conf >= FACE_MIN_CONFIDENCE
-            matches_target = (f_lbl == target_gender) if target_gender in ("female", "male") else (f_lbl != "unknown")
+    body_map = {}
+    if body_crops:
+        b_preds = _predict_single_model(body_crops, body_model, body_processor, "BodyModel")
+        for idx, (lbl, conf) in zip(body_indices, b_preds):
+            body_map[idx] = (lbl, conf)
+            debug_info[idx]["b"] = f"{lbl}:{conf:.2f}"
 
-            if is_confident and matches_target:
-                final_preds[idx] = f_lbl
+    for i in range(len(samples)):
+        f_lbl, f_conf = face_map.get(i, ("unknown", 0.0))
+        b_lbl, b_conf = body_map.get(i, ("unknown", 0.0))
+
+        # 1) وجه حقيقي حاسم الثقة (>= 0.90)
+        if f_lbl in ("female", "male") and f_conf >= FACE_HIGH_CONFIDENCE:
+            results[i] = (f_lbl, f_conf, True)
+            continue
+
+        # 2) دمج الوجه الحقيقي (0.75) + الجسم (0.25)
+        if f_lbl in ("female", "male") and b_lbl in ("female", "male"):
+            f_female_p = f_conf if f_lbl == "female" else (1.0 - f_conf)
+            b_female_p = b_conf if b_lbl == "female" else (1.0 - b_conf)
+            merged_female_p = (0.75 * f_female_p) + (0.25 * b_female_p)
+            merged_male_p = 1.0 - merged_female_p
+
+            if merged_female_p >= merged_male_p and merged_female_p >= FACE_MIN_CONFIDENCE:
+                results[i] = ("female", merged_female_p, False)
+            elif merged_male_p > merged_female_p and merged_male_p >= FACE_MIN_CONFIDENCE:
+                results[i] = ("male", merged_male_p, False)
             else:
-                b_crop = samples[idx].get("body")
-                if b_crop is not None and getattr(b_crop, "size", 0) > 0 and body_model is not None:
-                    need_body_from_face_indices.append(idx)
-                    need_body_from_face_crops.append(b_crop)
-                    debug_info[idx]["src"] = f"{debug_info[idx]['src']}+body"
-                else:
-                    final_preds[idx] = f_lbl if is_confident else "unknown"
+                results[i] = ("unknown", max(merged_female_p, merged_male_p), False)
+            continue
 
-    all_body_indices = direct_body_indices + need_body_from_face_indices
-    all_body_crops = direct_body_crops + need_body_from_face_crops
-
-    if all_body_crops:
-        body_results = _predict_single_model(all_body_crops, body_model, body_processor, "BodyModel")
-        for idx, (b_lbl, b_conf) in zip(all_body_indices, body_results):
-            debug_info[idx]["b"] = f"{b_lbl}:{b_conf:.2f}"
-            f_lbl, f_conf = face_preds_map.get(idx, ("unknown", 0.0))
-
-            # تقديم الجندر المستهدف دائماً إذا أعطاه أي من النموذجين بنسبة > 0.50
-            if target_gender in ("female", "male"):
-                if b_lbl == target_gender and b_conf > 0.50:
-                    final_preds[idx] = b_lbl
-                    continue
-                if f_lbl == target_gender and f_conf > 0.50:
-                    final_preds[idx] = f_lbl
-                    continue
-
-            if idx in face_preds_map:
-                if b_lbl != "unknown" and b_conf >= BODY_MIN_CONFIDENCE and (
-                    (target_gender in ("female", "male") and b_lbl == target_gender)
-                    or (f_conf < FACE_MIN_CONFIDENCE and b_conf > f_conf)
-                ):
-                    final_preds[idx] = b_lbl
-                else:
-                    final_preds[idx] = f_lbl if (f_lbl != "unknown" and f_conf >= FACE_MIN_CONFIDENCE) else "unknown"
+        # 3) وجه حقيقي فقط
+        if f_lbl in ("female", "male"):
+            if f_conf >= FACE_MIN_CONFIDENCE:
+                results[i] = (f_lbl, f_conf, False)
             else:
-                if b_lbl != "unknown" and b_conf >= BODY_MIN_CONFIDENCE:
-                    final_preds[idx] = b_lbl
-                else:
-                    final_preds[idx] = "unknown"
+                results[i] = ("unknown", f_conf, False)
+            continue
 
-    return final_preds, debug_info
+        # 4) جسم فقط (بدون وجه): عتبة صارمة 0.78 + تخفيف الوزن إلى 0.65
+        if b_lbl in ("female", "male"):
+            if b_conf >= BODY_MIN_CONFIDENCE:
+                results[i] = (b_lbl, b_conf * 0.65, False)
+            else:
+                results[i] = ("unknown", b_conf, False)
 
-def _finalize_incomplete_track(tid: int, v: dict, target_gender: str):
+    return results, debug_info
+
+def _evaluate_track_decision(v: dict, target_gender: str, force_finalize: bool = False):
     """
-    حسم قرار الـ track غير المكتمل (الذي لم يصل إلى MAX_SAMPLES_PER_TRACK ولم يجد الجندر المطلوب)
-    بالاعتماد على الجندر المخالف الذي وُجد فعلاً أثناء ظهوره.
+    حسم قرار المسار بتحفظ شديد لمنع تظليل الجندر غير المستهدف:
+    - الحسم الفوري يتطلب وجه حقيقي عالي الثقة (>= 0.90) أو 3 عينات متفقة بتفوق وزني واضح.
+    - عند وجود أي دليل مضاد، يشترط تفوق الوزن المستهدف بمقدار 1.8x على الأقل.
     """
     if v["decided"]:
         return
 
-    opposite_gender = "male" if target_gender == "female" else ("female" if target_gender == "male" else None)
+    f_votes = v["female_votes"]
+    m_votes = v["male_votes"]
+    f_weight = v["female_weight"]
+    m_weight = v["male_weight"]
 
-    if opposite_gender and v.get(opposite_gender, 0) > 0:
-        v["resolved_gender"] = opposite_gender
-        v["decision_reason"] = "opposite_gender_early_exit"
-    elif v.get("female", 0) > 0 and v.get("male", 0) == 0:
-        v["resolved_gender"] = "female"
-        v["decision_reason"] = "observed_female_early_exit"
-    elif v.get("male", 0) > 0 and v.get("female", 0) == 0:
-        v["resolved_gender"] = "male"
-        v["decision_reason"] = "observed_male_early_exit"
-    else:
-        v["resolved_gender"] = "unknown"
-        v["decision_reason"] = "no_target_before_exit"
+    if target_gender == "female":
+        if v["strong_face_female"] and m_weight == 0.0:
+            v["resolved_gender"] = "female"
+            v["decision_reason"] = "strong_face_female"
+            v["decided"] = True
+            return
+        if f_votes >= MIN_CONFIRM_VOTES and f_weight > max(1.8, m_weight * 1.8):
+            v["resolved_gender"] = "female"
+            v["decision_reason"] = "confirmed_target_female"
+            v["decided"] = True
+            return
+        if (v["strong_face_male"] and f_weight == 0.0) or (m_votes >= 2 and m_weight > f_weight * 1.4):
+            v["resolved_gender"] = "male"
+            v["decision_reason"] = "confirmed_opposite_male"
+            v["decided"] = True
+            return
 
-    v["decided"] = True
+    elif target_gender == "male":
+        if v["strong_face_male"] and f_weight == 0.0:
+            v["resolved_gender"] = "male"
+            v["decision_reason"] = "strong_face_male"
+            v["decided"] = True
+            return
+        if m_votes >= MIN_CONFIRM_VOTES and m_weight > max(1.8, f_weight * 1.8):
+            v["resolved_gender"] = "male"
+            v["decision_reason"] = "confirmed_target_male"
+            v["decided"] = True
+            return
+        if (v["strong_face_female"] and m_weight == 0.0) or (f_votes >= 2 and f_weight > m_weight * 1.4):
+            v["resolved_gender"] = "female"
+            v["decision_reason"] = "confirmed_opposite_female"
+            v["decided"] = True
+            return
+
+    if force_finalize or v["samples"] >= MAX_SAMPLES_PER_TRACK:
+        if target_gender == "female":
+            if f_votes >= 2 and f_weight > max(1.3, m_weight * 1.8):
+                v["resolved_gender"] = "female"
+                v["decision_reason"] = "final_weighted_female"
+            elif m_weight > f_weight:
+                v["resolved_gender"] = "male"
+                v["decision_reason"] = "final_weighted_male"
+            else:
+                v["resolved_gender"] = "unknown"
+                v["decision_reason"] = "insufficient_female_evidence"
+        elif target_gender == "male":
+            if m_votes >= 2 and m_weight > max(1.3, f_weight * 1.8):
+                v["resolved_gender"] = "male"
+                v["decision_reason"] = "final_weighted_male"
+            elif f_weight > m_weight:
+                v["resolved_gender"] = "female"
+                v["decision_reason"] = "final_weighted_female"
+            else:
+                v["resolved_gender"] = "unknown"
+                v["decision_reason"] = "insufficient_male_evidence"
+        else:
+            v["resolved_gender"] = "unknown"
+            v["decision_reason"] = "no_target"
+        v["decided"] = True
 
 def apply_local_roi_blur(frame: np.ndarray, alpha: np.ndarray, ksize: int) -> np.ndarray:
     """تطبيق البلور والمزج على المستطيل المحيط بالقناع فقط لتسريع المعالجة."""
@@ -549,7 +582,7 @@ async def Process_Video_Pro_Segmentation(file_path, replied, BlurRate, isfull, R
         use_gender_filter = (gender_filter in ("male", "female")) and any_gender_model_ready
 
         # =====================================================================
-        # المرحلة الأولى: رصد الفيديو وحفظ الأقنعة + حتى 4 فحوصات كل 0.5 ثانية
+        # المرحلة الأولى: رصد الفيديو وحفظ الأقنعة + جمع عينات موزونة لكل شخص
         # =====================================================================
         frame_records = {}
         track_votes = {}
@@ -579,7 +612,7 @@ async def Process_Video_Pro_Segmentation(file_path, replied, BlurRate, isfull, R
                 cur_sec = min(ret_num / fps, duration_sec)
                 try:
                     await replied.edit_text(
-                        f"🔍 المرحلة 1/2 (الرصد والفحص كل {SAMPLE_INTERVAL_SEC}ث حتى {MAX_SAMPLES_PER_TRACK} مرات)... `{fmt_clock(cur_sec)}-{fmt_clock(duration_sec)}`"
+                        f"🔍 المرحلة 1/2 (الرصد والتصويت الموزون حتى {MAX_SAMPLES_PER_TRACK} عينات)... `{fmt_clock(cur_sec)}-{fmt_clock(duration_sec)}`"
                     )
                 except Exception:
                     pass
@@ -619,8 +652,12 @@ async def Process_Video_Pro_Segmentation(file_path, replied, BlurRate, isfull, R
                     if use_gender_filter:
                         if tid not in track_votes:
                             track_votes[tid] = {
-                                "female": 0,
-                                "male": 0,
+                                "female_votes": 0,
+                                "male_votes": 0,
+                                "female_weight": 0.0,
+                                "male_weight": 0.0,
+                                "strong_face_female": False,
+                                "strong_face_male": False,
                                 "samples": 0,
                                 "last_sample_f": -999999,
                                 "decided": False,
@@ -629,7 +666,6 @@ async def Process_Video_Pro_Segmentation(file_path, replied, BlurRate, isfull, R
                             }
 
                         v = track_votes[tid]
-                        # يستمر في الفحص طالما لم يُحسم بعد ولم يتجاوز الحد الأقصى للعينات
                         if (
                             not v["decided"]
                             and v["samples"] < MAX_SAMPLES_PER_TRACK
@@ -646,48 +682,51 @@ async def Process_Video_Pro_Segmentation(file_path, replied, BlurRate, isfull, R
 
                 if use_gender_filter and pending_samples:
                     t0_g = time.perf_counter()
-                    batch_preds, batch_dbg = classify_sequential_with_debug(pending_samples, gender_filter)
+                    batch_preds, batch_dbg = classify_samples_weighted(pending_samples)
                     sec_now = round(ret_num / fps, 2)
-                    for tid, g_label, dbg in zip(pending_tids, batch_preds, batch_dbg):
+
+                    for tid, (g_label, g_conf, is_strong_face), dbg in zip(pending_tids, batch_preds, batch_dbg):
                         v = track_votes[tid]
                         if v["decided"]:
                             continue
-                        v["samples"] += 1
-                        if g_label in ("female", "male"):
-                            v[g_label] += 1
 
-                        # 1) إذا وُجد الجندر المطلوب: يُعتمد فوراً ويتوقف الفحص لهذا الـ tid
-                        if g_label == gender_filter:
+                        v["samples"] += 1
+                        if g_label == "female":
+                            v["female_votes"] += 1
+                            v["female_weight"] += g_conf
+                            if is_strong_face:
+                                v["strong_face_female"] = True
+                        elif g_label == "male":
+                            v["male_votes"] += 1
+                            v["male_weight"] += g_conf
+                            if is_strong_face:
+                                v["strong_face_male"] = True
+
+                        _evaluate_track_decision(v, gender_filter, force_finalize=False)
+                        if v["decided"] and v["resolved_gender"] == gender_filter:
                             approved_tids.add(tid)
-                            v["resolved_gender"] = gender_filter
-                            v["decision_reason"] = "target_gender_found"
-                            v["decided"] = True
-                        # 2) إذا اكتمل الحد الأقصى للعينات دون إيجاد الجندر المطلوب: يُحسم بما وُجد
-                        elif v["samples"] >= MAX_SAMPLES_PER_TRACK:
-                            v["resolved_gender"] = g_label if g_label in ("female", "male") else (
-                                "female" if v["female"] > v["male"] else ("male" if v["male"] > v["female"] else "unknown")
-                            )
-                            v["decision_reason"] = "max_samples_reached"
-                            v["decided"] = True
 
                         entry = (
                             f"tid={tid} f={ret_num}({sec_now}s) s#{v['samples']}/{MAX_SAMPLES_PER_TRACK} "
-                            f"src={dbg['src']} yn={dbg['yn']} F={dbg['f']} B={dbg['b']} -> {g_label} "
+                            f"src={dbg['src']} yn={dbg['yn']} F={dbg['f']} B={dbg['b']} -> {g_label}:{g_conf:.2f} "
+                            f"W=(F:{v['female_weight']:.2f}, M:{v['male_weight']:.2f}) "
                             f"[approved={tid in approved_tids}, decided={v['decided']}, reason={v['decision_reason']}]"
                         )
                         sample_logs.append(entry)
                         print(f"🧪 [SAMPLE_DEBUG] {entry}")
                     t_gender_sum += time.perf_counter() - t0_g
 
-        # حسم أي track لم يكمل العينات بسبب اختفائه أو نهاية المرحلة الأولى
+        # حسم أي مسار خرج مبكراً قبل إكمال الحد الأقصى للعينات
         if use_gender_filter:
             for tid, v in track_votes.items():
                 if not v["decided"]:
-                    _finalize_incomplete_track(tid, v, gender_filter)
+                    _evaluate_track_decision(v, gender_filter, force_finalize=True)
+                    if v["resolved_gender"] == gender_filter:
+                        approved_tids.add(tid)
                     print(
-                        f"⏹️ [EARLY_EXIT_RESOLVED] tid={tid} target={gender_filter} "
+                        f"⏹️ [FINALIZED_TRACK] tid={tid} target={gender_filter} "
                         f"samples={v['samples']}/{MAX_SAMPLES_PER_TRACK} "
-                        f"votes=(F:{v['female']}, M:{v['male']}) -> {v['resolved_gender']} "
+                        f"W=(F:{v['female_weight']:.2f}, M:{v['male_weight']:.2f}) -> {v['resolved_gender']} "
                         f"[{v['decision_reason']}, approved={tid in approved_tids}]"
                     )
 
@@ -859,7 +898,7 @@ async def _text_handler(client, message):
     if text in ['11', '31', '109', '185', '261', '491']:
         cfg['BlurRate'] = text
         await message.reply_text(
-            "اختر الجندر المستهدف للبلور (الوجه الواضح أولاً ثم الجسد عند الحاجة أو ضعف الثقة):",
+            "اختر الجندر المستهدف للبلور (تصويت موزون صارم لتجنب التظليل الخاطئ):",
             reply_markup=ReplyKeyboardMarkup([
                 [KeyboardButton("الكل"), KeyboardButton("إناث فقط"), KeyboardButton("ذكور فقط")]
             ], resize_keyboard=True)
@@ -943,7 +982,7 @@ async def _video_handler(client, message):
 def main():
     Cleanup_Work_Dir(Base_Dl_Dir)
     bot.start()
-    print("✅ Pro Segmentation Bot (Medium Thresholds + Target Priority + Max 4 Samples) is ONLINE!")
+    print("✅ Pro Segmentation Bot (Strict Weighted Multi-Sample Voting) is ONLINE!")
     try:
         idle()
     finally:
