@@ -8,19 +8,13 @@ os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
 Bot_Token = os.getenv('TOKEN')
 Admin_Id = int(os.getenv('Admin_Id', '0'))
 
-F5_ARABIC_REPO = os.getenv('F5_ARABIC_REPO', 'IbrahimSalah/Arabic-F5-TTS-v2').strip()
-F5_ARABIC_CKPT = os.getenv('F5_ARABIC_CKPT', 'model_547500_8_18.pt').strip()
-F5_ARABIC_VOCAB = os.getenv('F5_ARABIC_VOCAB', 'vocab.txt').strip()
-F5_ARABIC_CFG = os.getenv('F5_ARABIC_CFG', 'F5TTS_Base_8_18.yaml').strip()
-F5_REPO_REF_WAV = os.getenv('F5_REPO_REF_WAV', 'reference.wav').strip()
-
-DEFAULT_REF_TEXT = (
-    "لَا يَمُرُّ يَوْمٌ إِلَّا وَأَسْتَقْبِلُ عِدَّةَ رَسَائِلَ، "
-    "تَتَضَمَّنُ أَسْئِلَةً مُلِحَّةْ."
-)
-NFE_STEP = int(os.getenv('F5_NFE_STEP', '64'))
-CFG_STRENGTH = float(os.getenv('F5_CFG_STRENGTH', '2.5'))
-TTS_SPEED = float(os.getenv('F5_SPEED', '0.9'))
+FASIH_TTS_REPO = os.getenv('FASIH_TTS_REPO', 'NightPrince/Fasih-TTS-V1').strip()
+FASIH_LANGUAGE = os.getenv('FASIH_LANGUAGE', 'ar').strip()
+FASIH_TEMPERATURE = float(os.getenv('FASIH_TEMPERATURE', '0.65'))
+FASIH_REP_PENALTY = float(os.getenv('FASIH_REP_PENALTY', '2.0'))
+FASIH_SPLIT_TEXT = os.getenv('FASIH_SPLIT_TEXT', '0').strip() == '1'
+FASIH_SAMPLE_RATE = int(os.getenv('FASIH_SAMPLE_RATE', '24000'))
+MP3_BITRATE = os.getenv('MP3_BITRATE', '192k').strip()
 USE_REPO_REF_ALWAYS = os.getenv('USE_REPO_REF_ALWAYS', '1').strip() == '1'
 HF_TOKEN = os.getenv('HF_TOKEN') or os.getenv('HUGGINGFACE_HUB_TOKEN') or None
 
@@ -31,18 +25,12 @@ from pyrogram import Client, filters
 from pyrogram.errors import FloodWait, MessageTooLong
 from pyrogram import idle
 
-import yaml
 import torch
 import numpy as np
 import soundfile as sf
-from huggingface_hub import hf_hub_download
-from f5_tts.infer.utils_infer import (
-    load_model,
-    load_vocoder,
-    infer_process,
-    preprocess_ref_audio_text,
-)
-from f5_tts.model import DiT
+from huggingface_hub import snapshot_download
+from TTS.tts.configs.xtts_config import XttsConfig
+from TTS.tts.models.xtts import Xtts
 
 Api_Id = 15952578
 Api_Hash = '3600ce5f8f9b9e18cba0f318fa0e3600'
@@ -56,67 +44,28 @@ User_Sample_Msg_Ids = {}
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 
-def load_arabic_f5_tts(
-    repo_id: str,
-    device: str,
-    ckpt_filename: str,
-    vocab_filename: str,
-    cfg_filename: str,
-    ref_wav_filename: str,
-    token=None,
-):
-    """تحميل ملفات Arabic-F5-TTS-v2 والـ Vocoder والنموذج."""
-    vocab_file_path = hf_hub_download(repo_id=repo_id, filename=vocab_filename, token=token)
-    ckpt_file_path = hf_hub_download(repo_id=repo_id, filename=ckpt_filename, token=token)
-    config_file_path = hf_hub_download(repo_id=repo_id, filename=cfg_filename, token=token)
-    repo_ref_wav_path = hf_hub_download(repo_id=repo_id, filename=ref_wav_filename, token=token)
+def load_fasih_tts(repo_id: str, device: str, token=None):
+    """تحميل نموذج Fasih-TTS-V1 وملف speaker_latents.pt."""
+    model_dir = snapshot_download(repo_id=repo_id, token=token)
+    config = XttsConfig()
+    config.load_json(f"{model_dir}/config.json")
 
-    with open(config_file_path, "r", encoding="utf-8") as f:
-        loaded_yaml = yaml.safe_load(f) or {}
-
-    model_cfg = dict(
-        dim=1024,
-        depth=22,
-        heads=18,
-        ff_mult=2,
-        text_dim=512,
-        conv_layers=8,
+    model = Xtts.init_from_config(config)
+    model.load_checkpoint(
+        config,
+        checkpoint_path=f"{model_dir}/model.pth",
+        vocab_path=f"{model_dir}/vocab.json",
+        use_deepspeed=False,
     )
-    mel_spec_type = "vocos"
+    model.to(device).eval()
 
-    model_section = loaded_yaml.get("model", {})
-    if isinstance(model_section, dict):
-        mel_spec_type = model_section.get("mel_spec", {}).get("mel_spec_type", mel_spec_type)
-        arch = model_section.get("arch", {})
-        if isinstance(arch, dict) and arch:
-            model_cfg.update({
-                k: v for k, v in arch.items()
-                if k in ("dim", "depth", "heads", "ff_mult", "text_dim", "conv_layers")
-            })
-
-    vocoder = load_vocoder(is_local=False, device=device)
-    ema_model = load_model(
-        DiT,
-        model_cfg,
-        ckpt_path=ckpt_file_path,
-        mel_spec_type=mel_spec_type,
-        vocab_file=vocab_file_path,
-        device=device,
-    )
-    return ema_model, vocoder, mel_spec_type, repo_ref_wav_path
+    latents = torch.load(f"{model_dir}/speaker_latents.pt", map_location=device)
+    return model, latents
 
 
-print(f"🔄 جاري تحميل نموذج {F5_ARABIC_REPO} ({F5_ARABIC_CKPT}) على: {DEVICE}...")
-F5_MODEL, F5_VOCODER, F5_MEL_TYPE, REPO_REF_WAV_PATH = load_arabic_f5_tts(
-    F5_ARABIC_REPO,
-    DEVICE,
-    ckpt_filename=F5_ARABIC_CKPT,
-    vocab_filename=F5_ARABIC_VOCAB,
-    cfg_filename=F5_ARABIC_CFG,
-    ref_wav_filename=F5_REPO_REF_WAV,
-    token=HF_TOKEN,
-)
-print("✅ تم تحميل نموذج Arabic-F5-TTS-v2 بنجاح!")
+print(f"🔄 جاري تحميل نموذج {FASIH_TTS_REPO} على: {DEVICE}...")
+FASIH_MODEL, FASIH_LATENTS = load_fasih_tts(FASIH_TTS_REPO, DEVICE, token=HF_TOKEN)
+print("✅ تم تحميل نموذج Fasih-TTS-V1 بنجاح!")
 
 
 async def run_command(cmd):
@@ -136,46 +85,59 @@ async def convert_sample_to_wav(input_audio_path, output_wav_path):
     return os.path.exists(output_wav_path) and os.path.getsize(output_wav_path) > 0
 
 
-def synthesize_f5_sync(text: str, speaker_wav_path: str, output_wav_path: str) -> str:
-    """توليد الصوت عبر Arabic-F5-TTS-v2 بالإعدادات المضبوطة."""
+async def convert_wav_to_mp3(input_wav_path: str, output_mp3_path: str, bitrate: str = "192k") -> bool:
+    """تحويل ملف WAV الناتج إلى صيغة MP3 قبل الإرسال."""
+    cmd = f'ffmpeg -i "{input_wav_path}" -codec:a libmp3lame -b:a {bitrate} -ar {FASIH_SAMPLE_RATE} "{output_mp3_path}" -y'
+    _, stderr = await run_command(cmd)
+    if not (os.path.exists(output_mp3_path) and os.path.getsize(output_mp3_path) > 0):
+        raise RuntimeError(f"فشل تحويل الصوت إلى MP3: {stderr.strip()}")
+    return True
+
+
+def synthesize_fasih_sync(text: str, speaker_wav_path: str, output_wav_path: str) -> str:
+    """توليد الصوت عبر Fasih-TTS-V1 وحفظه كملف WAV بمعدل 24kHz."""
     abs_output_wav = os.path.abspath(output_wav_path)
     base_dir = os.path.dirname(abs_output_wav)
     os.makedirs(base_dir, exist_ok=True)
-
-    using_repo_ref = USE_REPO_REF_ALWAYS or not speaker_wav_path or not os.path.exists(speaker_wav_path)
-    active_ref = REPO_REF_WAV_PATH if using_repo_ref else speaker_wav_path
-    ref_text_to_use = DEFAULT_REF_TEXT if using_repo_ref else ""
-
-    abs_speaker_wav = os.path.abspath(active_ref)
-    ref_audio, resolved_ref_text = preprocess_ref_audio_text(abs_speaker_wav, ref_text_to_use)
 
     clean_text = " ".join(text.split()).strip()
     if not clean_text:
         raise ValueError("النص فارغ بعد التنظيف.")
 
-    audio_wave, sample_rate, _ = infer_process(
-        ref_audio=ref_audio,
-        ref_text=resolved_ref_text,
-        gen_text=clean_text,
-        model_obj=F5_MODEL,
-        vocoder=F5_VOCODER,
-        mel_spec_type=F5_MEL_TYPE,
-        nfe_step=NFE_STEP,
-        cfg_strength=CFG_STRENGTH,
-        speed=TTS_SPEED,
-        show_info=lambda _: None,
-        device=DEVICE,
-    )
+    if not USE_REPO_REF_ALWAYS and speaker_wav_path and os.path.exists(speaker_wav_path):
+        gpt_cond_latent, speaker_embedding = FASIH_MODEL.get_conditioning_latents(
+            audio_path=[os.path.abspath(speaker_wav_path)]
+        )
+    else:
+        gpt_cond_latent = FASIH_LATENTS["gpt_cond_latent"]
+        speaker_embedding = FASIH_LATENTS["speaker_embedding"]
 
-    wave_np = np.asarray(audio_wave, dtype=np.float32)
-    if np.isnan(wave_np).any() or np.isinf(wave_np).any():
-        raise RuntimeError("النموذج أخرج قيم NaN أو Inf.")
+    with torch.inference_mode():
+        out = FASIH_MODEL.inference(
+            clean_text,
+            FASIH_LANGUAGE,
+            gpt_cond_latent,
+            speaker_embedding,
+            temperature=FASIH_TEMPERATURE,
+            repetition_penalty=FASIH_REP_PENALTY,
+            enable_text_splitting=FASIH_SPLIT_TEXT,
+        )
 
-    peak = float(np.max(np.abs(wave_np))) if wave_np.size > 0 else 0.0
+    raw_wav = out["wav"]
+    if hasattr(raw_wav, "detach"):
+        raw_wav = raw_wav.detach().cpu().numpy()
+    elif hasattr(raw_wav, "cpu"):
+        raw_wav = raw_wav.cpu().numpy()
+
+    wave_np = np.squeeze(np.asarray(raw_wav, dtype=np.float32))
+    if wave_np.size == 0 or np.isnan(wave_np).any() or np.isinf(wave_np).any():
+        raise RuntimeError("النموذج أخرج موجة صوتية فارغة أو تحتوي على قيم NaN/Inf.")
+
+    peak = float(np.max(np.abs(wave_np)))
     if peak > 1.0:
         wave_np = wave_np / peak * 0.95
 
-    sf.write(abs_output_wav, wave_np, sample_rate)
+    sf.write(abs_output_wav, wave_np, samplerate=FASIH_SAMPLE_RATE)
     return abs_output_wav
 
 
@@ -226,7 +188,7 @@ async def Multi_loop_async():
 
         try:
             try:
-                await reply_msg.edit_text("جارِ توليد الصوت عبر Arabic-F5-TTS-v2 الآن ☕...")
+                await reply_msg.edit_text("جارِ توليد الصوت عبر Fasih-TTS-V1 الآن ☕...")
             except Exception:
                 reply_msg = await text_msg.reply("جارِ العمل ☕", reply_to_message_id=text_msg.id)
 
@@ -251,11 +213,12 @@ async def Multi_loop_async():
             task_dl_path = f'./tts_work_{user_id}_{text_msg_id}_{Bot_Identifier}/'
             os.makedirs(task_dl_path, exist_ok=True)
 
-            output_wav_path = os.path.join(task_dl_path, f"f5_ar_{text_msg_id}.wav")
+            output_wav_path = os.path.join(task_dl_path, f"fasih_ar_{text_msg_id}.wav")
+            output_mp3_path = os.path.join(task_dl_path, f"fasih_ar_{text_msg_id}.mp3")
 
             await reply_msg.edit_text("🎙️ جارِ تحويل النص إلى صوت...")
             await asyncio.to_thread(
-                synthesize_f5_sync,
+                synthesize_fasih_sync,
                 input_text,
                 speaker_wav or "",
                 output_wav_path
@@ -264,14 +227,18 @@ async def Multi_loop_async():
             if not os.path.exists(output_wav_path) or os.path.getsize(output_wav_path) == 0:
                 raise RuntimeError("فشل إنشاء الملف الصوتي الناتج.")
 
-            await reply_msg.edit_text("📤 جارِ إرسال المقطع الصوتي...")
+            await reply_msg.edit_text("🔄 جارِ تحويل المقطع إلى صيغة MP3...")
+            await convert_wav_to_mp3(output_wav_path, output_mp3_path, bitrate=MP3_BITRATE)
+
+            await reply_msg.edit_text("📤 جارِ إرسال ملف MP3...")
             await text_msg.reply_audio(
-                output_wav_path,
-                caption="✅ تم توليد الصوت عبر Arabic-F5-TTS-v2 بنجاح"
+                output_mp3_path,
+                caption="✅ تم توليد الصوت وتحويله إلى MP3 بنجاح"
             )
 
-            if os.path.exists(output_wav_path):
-                os.remove(output_wav_path)
+            for temp_file in (output_wav_path, output_mp3_path):
+                if os.path.exists(temp_file):
+                    os.remove(temp_file)
             try:
                 os.rmdir(task_dl_path)
             except OSError:
@@ -298,7 +265,7 @@ async def Multi_loop_async():
 @bot.on_message(filters.command('start') & filters.private)
 async def start_cmd(client, message):
     await message.reply(
-        "أهلاً بك في بوت تحويل النص إلى صوت (Arabic-F5-TTS-v2) 🎙️\n\n"
+        "أهلاً بك في بوت تحويل النص إلى صوت (Fasih-TTS-V1) 🎙️\n\n"
         "أرسل **النص** العربي المشكول الذي تريد تحويله إلى صوت.\n\n"
         "لبقية البوتات \n\n @sunnaybots"
     )
@@ -353,8 +320,8 @@ async def start_bot_async():
     try:
         await bot.start()
         if Admin_Id != 0:
-            await bot.send_message(Admin_Id, 'Arabic-F5-TTS-v2 Bot Started ✅')
-        print("✅ Arabic-F5-TTS-v2 Bot (Global List Loop) is ONLINE!")
+            await bot.send_message(Admin_Id, 'Fasih-TTS-V1 Bot Started ✅')
+        print("✅ Fasih-TTS-V1 Bot (Global List Loop) is ONLINE!")
         await idle()
     finally:
         if bot.is_connected:
