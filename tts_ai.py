@@ -1,4 +1,4 @@
-import nest_asyncio, os, asyncio, gc, time
+import nest_asyncio, os, asyncio, gc, time, re
 nest_asyncio.apply()
 
 os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
@@ -14,6 +14,8 @@ FASIH_TEMPERATURE = float(os.getenv('FASIH_TEMPERATURE', '0.65'))
 FASIH_REP_PENALTY = float(os.getenv('FASIH_REP_PENALTY', '2.0'))
 FASIH_SPLIT_TEXT = os.getenv('FASIH_SPLIT_TEXT', '0').strip() == '1'
 FASIH_SAMPLE_RATE = int(os.getenv('FASIH_SAMPLE_RATE', '24000'))
+MAX_AR_CHARS = int(os.getenv('MAX_AR_CHARS', '145'))
+PAUSE_BETWEEN_CHUNKS_SEC = float(os.getenv('PAUSE_BETWEEN_CHUNKS_SEC', '0.12'))
 MP3_BITRATE = os.getenv('MP3_BITRATE', '192k').strip()
 USE_REPO_REF_ALWAYS = os.getenv('USE_REPO_REF_ALWAYS', '1').strip() == '1'
 HF_TOKEN = os.getenv('HF_TOKEN') or os.getenv('HUGGINGFACE_HUB_TOKEN') or None
@@ -32,8 +34,8 @@ from huggingface_hub import snapshot_download
 from TTS.tts.configs.xtts_config import XttsConfig
 from TTS.tts.models.xtts import Xtts
 
-Api_Id = 15952578
-Api_Hash = '3600ce5f8f9b9e18cba0f318fa0e3600'
+Api_Id = int(os.getenv('API_ID', '15952578'))
+Api_Hash = os.getenv('API_HASH', '3600ce5f8f9b9e18cba0f318fa0e3600')
 
 Global_Main_Queue = []
 Public_Loop = False
@@ -94,33 +96,116 @@ async def convert_wav_to_mp3(input_wav_path: str, output_mp3_path: str, bitrate:
     return True
 
 
-def synthesize_fasih_sync(text: str, speaker_wav_path: str, output_wav_path: str) -> str:
-    """توليد الصوت عبر Fasih-TTS-V1 وحفظه كملف WAV بمعدل 24kHz."""
-    abs_output_wav = os.path.abspath(output_wav_path)
-    base_dir = os.path.dirname(abs_output_wav)
-    os.makedirs(base_dir, exist_ok=True)
-
+def split_arabic_text_by_punctuation(text: str, max_chars: int = MAX_AR_CHARS) -> list[str]:
+    """
+    تقسيم النص العربي بالاعتماد أولًا على الفواصل وعلامات الترقيم والأسطر،
+    ثم دمج المقاطع القصيرة حتى تقترب من max_chars دون كسر الجمل.
+    """
     clean_text = " ".join(text.split()).strip()
     if not clean_text:
-        raise ValueError("النص فارغ بعد التنظيف.")
+        return []
 
-    if not USE_REPO_REF_ALWAYS and speaker_wav_path and os.path.exists(speaker_wav_path):
-        gpt_cond_latent, speaker_embedding = FASIH_MODEL.get_conditioning_latents(
-            audio_path=[os.path.abspath(speaker_wav_path)]
-        )
-    else:
-        gpt_cond_latent = FASIH_LATENTS["gpt_cond_latent"]
-        speaker_embedding = FASIH_LATENTS["speaker_embedding"]
+    # فصل النص عند الفواصل (العربية والإنجليزية)، الفواصل المنقوطة، النقاط، علامات الاستفهام والتعجب، والأسطر
+    clauses = [
+        c.strip()
+        for c in re.split(r"(?<=[،,؛;.!؟?\n])\s*", clean_text)
+        if c.strip()
+    ]
 
+    chunks: list[str] = []
+    current = ""
+
+    for clause in clauses:
+        # إذا كان المقطع الواحد أطول من الحد الأقصى، نقسمه عند الكلمات فقط كحل أخير
+        if len(clause) > max_chars:
+            if current:
+                chunks.append(current.strip())
+                current = ""
+
+            words = clause.split(" ")
+            part = ""
+            for w in words:
+                candidate = f"{part} {w}".strip() if part else w
+                if len(candidate) <= max_chars:
+                    part = candidate
+                else:
+                    if part:
+                        chunks.append(part.strip())
+                    part = w
+            if part:
+                current = part
+            continue
+
+        # محاولة ضم المقطع الحالي إلى الجزء الجاري تجميعه إذا لم يتجاوز الحد
+        candidate = f"{current} {clause}".strip() if current else clause
+        if len(candidate) <= max_chars:
+            current = candidate
+        else:
+            if current:
+                chunks.append(current.strip())
+            current = clause
+
+    if current:
+        chunks.append(current.strip())
+
+    return chunks
+
+
+def write_wav_with_tail_silence(wave_np: np.ndarray, output_wav_path: str, sample_rate: int, pause_sec: float) -> str:
+    """حفظ موجة صوتية كملف WAV مع إضافة صمت خفيف في النهاية لتحسين الدمج."""
+    wave_np = np.squeeze(np.asarray(wave_np, dtype=np.float32))
+    if wave_np.size == 0 or np.isnan(wave_np).any() or np.isinf(wave_np).any():
+        raise RuntimeError("النموذج أخرج موجة صوتية فارغة أو تحتوي على قيم NaN/Inf.")
+
+    peak = float(np.max(np.abs(wave_np)))
+    if peak > 1.0:
+        wave_np = wave_np / peak * 0.95
+
+    if pause_sec > 0:
+        silence_samples = int(sample_rate * pause_sec)
+        if silence_samples > 0:
+            silence = np.zeros(silence_samples, dtype=np.float32)
+            wave_np = np.concatenate([wave_np, silence])
+
+    sf.write(output_wav_path, wave_np, samplerate=sample_rate)
+    return output_wav_path
+
+
+async def concat_wav_files(wav_paths: list[str], merged_wav_path: str) -> str:
+    """دمج عدة ملفات WAV بالترتيب في ملف WAV واحد باستخدام ffmpeg."""
+    if len(wav_paths) == 1:
+        os.replace(wav_paths[0], merged_wav_path)
+        return merged_wav_path
+
+    list_file_path = f"{merged_wav_path}.txt"
+    with open(list_file_path, "w", encoding="utf-8") as f:
+        for p in wav_paths:
+            abs_p = os.path.abspath(p).replace("'", "'\\''")
+            f.write(f"file '{abs_p}'\n")
+
+    cmd = f'ffmpeg -f concat -safe 0 -i "{list_file_path}" -c copy "{merged_wav_path}" -y'
+    _, stderr = await run_command(cmd)
+
+    if os.path.exists(list_file_path):
+        os.remove(list_file_path)
+
+    if not (os.path.exists(merged_wav_path) and os.path.getsize(merged_wav_path) > 0):
+        raise RuntimeError(f"فشل دمج المقاطع الصوتية: {stderr.strip()}")
+
+    return merged_wav_path
+
+
+def synthesize_single_chunk_sync(text_chunk: str, gpt_cond_latent, speaker_embedding, output_wav_path: str) -> str:
+    """توليد مقطع صوتي واحد لنص مقسّم حسب الفواصل."""
     with torch.inference_mode():
         out = FASIH_MODEL.inference(
-            clean_text,
+            text_chunk,
             FASIH_LANGUAGE,
             gpt_cond_latent,
             speaker_embedding,
             temperature=FASIH_TEMPERATURE,
             repetition_penalty=FASIH_REP_PENALTY,
-            enable_text_splitting=FASIH_SPLIT_TEXT,
+            enable_text_splitting=False,
         )
 
     raw_wav = out["wav"]
@@ -129,16 +214,55 @@ def synthesize_fasih_sync(text: str, speaker_wav_path: str, output_wav_path: str
     elif hasattr(raw_wav, "cpu"):
         raw_wav = raw_wav.cpu().numpy()
 
-    wave_np = np.squeeze(np.asarray(raw_wav, dtype=np.float32))
-    if wave_np.size == 0 or np.isnan(wave_np).any() or np.isinf(wave_np).any():
-        raise RuntimeError("النموذج أخرج موجة صوتية فارغة أو تحتوي على قيم NaN/Inf.")
+    return write_wav_with_tail_silence(
+        raw_wav,
+        output_wav_path=output_wav_path,
+        sample_rate=FASIH_SAMPLE_RATE,
+        pause_sec=PAUSE_BETWEEN_CHUNKS_SEC,
+    )
 
-    peak = float(np.max(np.abs(wave_np)))
-    if peak > 1.0:
-        wave_np = wave_np / peak * 0.95
 
-    sf.write(abs_output_wav, wave_np, samplerate=FASIH_SAMPLE_RATE)
-    return abs_output_wav
+async def synthesize_fasih_full_async(text: str, speaker_wav_path: str, output_wav_path: str, progress_cb=None) -> str:
+    """توليد كامل النص عبر تقسيمه حسب الفواصل أولًا ثم دمج المقاطع."""
+    abs_output_wav = os.path.abspath(output_wav_path)
+    base_dir = os.path.dirname(abs_output_wav)
+    os.makedirs(base_dir, exist_ok=True)
+
+    chunks = split_arabic_text_by_punctuation(text, max_chars=MAX_AR_CHARS)
+    if not chunks:
+        raise ValueError("النص فارغ بعد التنظيف.")
+
+    if not USE_REPO_REF_ALWAYS and speaker_wav_path and os.path.exists(speaker_wav_path):
+        gpt_cond_latent, speaker_embedding = await asyncio.to_thread(
+            FASIH_MODEL.get_conditioning_latents,
+            audio_path=[os.path.abspath(speaker_wav_path)],
+        )
+    else:
+        gpt_cond_latent = FASIH_LATENTS["gpt_cond_latent"]
+        speaker_embedding = FASIH_LATENTS["speaker_embedding"]
+
+    part_paths: list[str] = []
+    try:
+        total = len(chunks)
+        for idx, chunk in enumerate(chunks, start=1):
+            if progress_cb and total > 1:
+                await progress_cb(f"🎙️ جارِ توليد الجزء {idx} من {total}...")
+            part_wav = os.path.join(base_dir, f"part_{idx:03d}.wav")
+            await asyncio.to_thread(
+                synthesize_single_chunk_sync,
+                chunk,
+                gpt_cond_latent,
+                speaker_embedding,
+                part_wav,
+            )
+            part_paths.append(part_wav)
+
+        await concat_wav_files(part_paths, abs_output_wav)
+        return abs_output_wav
+    finally:
+        for p in part_paths:
+            if os.path.exists(p):
+                os.remove(p)
 
 
 def Pyrogram_Client(Bot_Token):
@@ -216,12 +340,18 @@ async def Multi_loop_async():
             output_wav_path = os.path.join(task_dl_path, f"fasih_ar_{text_msg_id}.wav")
             output_mp3_path = os.path.join(task_dl_path, f"fasih_ar_{text_msg_id}.mp3")
 
+            async def on_chunk_progress(status_str: str):
+                try:
+                    await reply_msg.edit_text(status_str)
+                except Exception:
+                    pass
+
             await reply_msg.edit_text("🎙️ جارِ تحويل النص إلى صوت...")
-            await asyncio.to_thread(
-                synthesize_fasih_sync,
+            await synthesize_fasih_full_async(
                 input_text,
                 speaker_wav or "",
-                output_wav_path
+                output_wav_path,
+                progress_cb=on_chunk_progress,
             )
 
             if not os.path.exists(output_wav_path) or os.path.getsize(output_wav_path) == 0:
